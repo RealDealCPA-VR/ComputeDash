@@ -59,8 +59,10 @@ test("optional activity route respects dashboard auth, private-source isolation 
       });
       const base = `http://127.0.0.1:${port}`;
       const headers = { Authorization: "Bearer dashboard-test-token" };
-      assert.equal((await fetch(`${base}/api/inference/activity`)).status, 401);
-      assert.equal((await fetch(`${base}/api/inference/activity`, { headers: { Authorization: "Bearer wrong" } })).status, 401);
+      // Reads from the dashboard machine itself are open; a client that is not direct local needs the token.
+      const remote = { "X-Forwarded-For": "192.0.2.10" };
+      assert.equal((await fetch(`${base}/api/inference/activity`, { headers: remote })).status, 401);
+      assert.equal((await fetch(`${base}/api/inference/activity`, { headers: { ...remote, Authorization: "Bearer wrong" } })).status, 401);
       const response = await fetch(`${base}/api/inference/activity`, { headers });
       assert.equal(response.status, 200);
       assert.equal(response.headers.get("cache-control"), "no-store");

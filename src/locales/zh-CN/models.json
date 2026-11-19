@@ -48,7 +48,21 @@
   },
   "token": {
     "banner": "在仪表盘设置访问令牌之前，模型控制已禁用。请在服务器上设置 SPARKDASH_TOKEN，然后重启服务器。清单和日志仍可查看。",
-    "disabledReason": "已禁用：模型控制需要仪表盘访问令牌（服务器上的 SPARKDASH_TOKEN）。"
+    "disabledReason": "已禁用：模型控制需要仪表盘访问令牌（服务器上的 SPARKDASH_TOKEN）。",
+    "serverTitle": "模型控制需要在仪表盘主机上设置访问令牌",
+    "serverBody": "在仪表盘所在主机设置 SPARKDASH_TOKEN 之前，启动、停止、切换模型以及编辑集群都会被拒绝。清单和日志仍然可用。",
+    "stepGenerate": "生成一个随机令牌：",
+    "stepEnv": "将其添加到仪表盘的 .env 文件中，把 <value> 替换为该令牌：",
+    "stepRestart": "重启仪表盘，然后在此浏览器提示时输入同一个令牌。",
+    "setupHint": "npm run setup 会自动完成以上所有步骤。",
+    "docsLink": "集群模型文档（docs/FLEET-MODELS.md）",
+    "copyCommand": "复制命令",
+    "copyEnvLine": "复制 .env 行",
+    "copied": "已复制",
+    "copyFailed": "复制失败：请手动选择文本",
+    "browserBody": "仪表盘已设置访问令牌，但此浏览器尚未输入。模型控制会要求输入；现在输入可避免操作被打断。",
+    "enter": "输入令牌",
+    "waitingForToken": "服务器要求提供访问令牌。在对话框中输入后，此操作会自动重新执行。"
   },
   "errors": {
     "targets": "无法加载目标：{{error}}",
@@ -66,7 +80,7 @@
     "clusters": "集群",
     "noNodes": "尚未注册任何节点。",
     "noClusters": "尚无集群。使用“集群”按钮定义一个。",
-    "empty": "尚无目标。请添加 Spark 或 GPU 主机后刷新。",
+    "empty": "还没有机器。添加 DGX Spark、GPU 主机或 Mac 后，其模型会显示在这里。",
     "kindDistributed": "分布式集群",
     "kindGroup": "可视分组",
     "kindCluster": "集群",
@@ -74,7 +88,12 @@
     "serving_other": "{{count}} 个模型正在服务",
     "servingUnknown": "服务中：未知",
     "busy": "操作进行中",
-    "memory": "内存 {{memory}}"
+    "memory": "内存 {{memory}}",
+    "addMachine": "添加机器",
+    "servingNone": "无模型服务",
+    "servingOne": "正在服务 {{model}}",
+    "servingMore": "正在服务 {{model}} +{{more}}",
+    "servingList": "正在服务：{{models}}"
   },
   "platform": {
     "linux": "Linux",
@@ -122,7 +141,9 @@
     "refreshInventory": "刷新清单",
     "groupNote": "这是一个可视分组：它没有自己的推理端点。请在其成员节点上管理模型。",
     "noDistributedControl": "此集群未设置启动配置，因此无法进行分布式启动和停止。",
-    "busyElsewhere": "此目标（或其所属集群的成员）上正在运行一个操作。操作完成前控制已锁定。"
+    "busyElsewhere": "此目标（或其所属集群的成员）上正在运行一个操作。操作完成前控制已锁定。",
+    "windowsNote": "Windows 主机：目前只能在这里启动、停止或切换 Ollama 模型。此机器上的其他引擎以只读方式显示。",
+    "lockedRunning": "此操作运行期间控制已锁定。"
   },
   "inventory": {
     "unreachable": "目标不可达。在其恢复响应之前，不会将任何模型状态显示为当前状态。",
@@ -130,7 +151,9 @@
     "errorsTitle_one": "{{count}} 个发现来源失败：",
     "errorsTitle_other": "{{count}} 个发现来源失败：",
     "collectedAt": "采集于 {{time}}",
-    "refreshFailed": "上次刷新失败。此清单可能已过时。"
+    "refreshFailed": "上次刷新失败。此清单可能已过时。",
+    "staleBadge": "已过期",
+    "staleBadgeHint": "采集于一分钟以前。页面每 20 秒重新读取一次；“刷新清单”会重新发现。"
   },
   "runtimes": {
     "title": "运行时",
@@ -151,7 +174,13 @@
     "servedBy": "由 {{cluster}} 提供服务",
     "lastSeen": "上次为{{state}}（{{time}}）",
     "lastSeenNoTime": "上次为{{state}}",
-    "clusterRowStale": "集群的清单已过时。"
+    "clusterRowStale": "集群的清单已过时。",
+    "noActions": {
+      "windowsOllamaOnly": "Windows 主机：只能控制 Ollama 模型",
+      "engineNoLifecycle": "引擎不支持加载/卸载",
+      "noLaunchProfile": "只读：未注册启动配置",
+      "notInThisState": "此状态下没有可用操作"
+    }
   },
   "table": {
     "model": "模型",

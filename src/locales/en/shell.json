@@ -21,7 +21,10 @@
     "showSidebar": "Show sidebar",
     "showSidebarTitle": "Show sidebar (Ctrl+B)",
     "apiKeys": "API Keys",
-    "models": "Models"
+    "models": "Models",
+    "insights": "Insights",
+    "tools": "Tools",
+    "pageLoading": "Loading page"
   },
   "sidebar": {
     "sortable": "sortable",
@@ -48,7 +51,8 @@
     "credit": "by Mia's AI Lab",
     "website": "Mia's AI Lab website",
     "github": "sparkDash on GitHub",
-    "x": "Mia's AI Lab on X"
+    "x": "Mia's AI Lab on X",
+    "sectionToggle": "Show or hide {{section}}"
   },
   "mobile": {
     "primary": "Primary",
@@ -134,6 +138,13 @@
     "dismiss": "Dismiss",
     "dismissLabel": "Dismiss error"
   },
+  "pageError": {
+    "updatedTitle": "sparkDash was updated",
+    "updatedDetail": "This view's code is no longer on the server. Reload to load the new version.",
+    "title": "This view could not be shown",
+    "detail": "Something went wrong while rendering it. Reloading usually fixes it.",
+    "reload": "Reload"
+  },
   "openAccess": {
     "label": "Open access",
     "dialogLabel": "Open access",
@@ -165,5 +176,18 @@
     "emptyTitle": "No Spark registered",
     "emptyDescription": "Add a DGX Spark or GPU host to start monitoring.",
     "addSpark": "Add Spark"
+  },
+  "operations": {
+    "switch": "Switching {{model}} on {{target}}",
+    "start": "Starting {{model}} on {{target}}",
+    "stop": "Stopping {{model}} on {{target}}",
+    "reload": "Reloading {{model}} on {{target}}",
+    "other": "Model operation on {{target}}",
+    "unknownModel": "a model",
+    "step": "step {{step}}/{{total}}",
+    "more_one": "+{{count}} more",
+    "more_other": "+{{count}} more",
+    "open": "Open the Models page for {{target}}",
+    "finished": "Model operation on {{target}} finished"
   }
 }

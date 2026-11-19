@@ -116,4 +116,19 @@ describe("optional inference activity", () => {
     await act(async () => vi.advanceTimersByTime(60_000));
     expect(fetchActivity).toHaveBeenCalledTimes(calls);
   });
+
+  it("pauses polling while the tab is hidden and refreshes when it returns", async () => {
+    vi.useFakeTimers();
+    fetchActivity.mockResolvedValue(activity());
+    render(<InferenceTrafficCard />);
+    await flush();
+    const calls = fetchActivity.mock.calls.length;
+    const visibility = vi.spyOn(document, "visibilityState", "get").mockReturnValue("hidden");
+    await act(async () => { document.dispatchEvent(new Event("visibilitychange")); });
+    await act(async () => vi.advanceTimersByTime(20_000));
+    expect(fetchActivity).toHaveBeenCalledTimes(calls);
+    visibility.mockReturnValue("visible");
+    await act(async () => { document.dispatchEvent(new Event("visibilitychange")); });
+    expect(fetchActivity).toHaveBeenCalledTimes(calls + 1);
+  });
 });

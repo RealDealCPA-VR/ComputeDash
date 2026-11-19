@@ -1,5 +1,5 @@
 import { withPageTransition } from "./pageTransition";
-import { useEffect, useCallback, useMemo, useState } from "react";
+import { useEffect, useCallback, useMemo, useRef, useState } from "react";
 import { KIOSK_ID, idToPath, pathToId } from "../constants";
 
 export type RouteMode = "app" | "showcase" | "kiosk";
@@ -58,13 +58,23 @@ export interface RouteActions {
  *
  * The initial id comes from `initialActiveId()` in constants (pass it to the state's initialiser).
  * `navigate(id)` updates the URL and the active id; Back/forward work via popstate.
+ * Pass the current id as `activeId` so a popstate that stays on the same view (only the
+ * query changed, e.g. the Models page's `?target=`) skips the page transition.
  */
-export function useRoute(setActiveId: (id: string | null) => void): RouteActions {
+export function useRoute(setActiveId: (id: string | null) => void, activeId?: string | null): RouteActions {
+  const activeRef = useRef(activeId);
+  useEffect(() => {
+    activeRef.current = activeId;
+  }, [activeId]);
+
   // Sync back/forward navigation (the browser restores the scroll position itself)
   useEffect(() => {
     const handler = () => {
       const id = pathToId(window.location.pathname);
-      if (id !== null) withPageTransition(() => setActiveId(id));
+      if (id === null) return;
+      // Same view, new query: the page re-reads it itself; a cross-fade would show nothing changing.
+      if (activeRef.current !== undefined && id === activeRef.current) setActiveId(id);
+      else withPageTransition(() => setActiveId(id));
     };
     window.addEventListener("popstate", handler);
     return () => window.removeEventListener("popstate", handler);

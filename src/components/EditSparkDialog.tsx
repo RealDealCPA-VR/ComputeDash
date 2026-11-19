@@ -13,7 +13,8 @@ import {
   updateSpark,
 } from "../api/client";
 import type { SparkConfig, SparkRole, SparkTestResponse } from "../api/types";
-import { UNIT_TYPE_OPTIONS, unitTypeOf, unitTypePatch, type UnitType } from "../shared/deviceKind";
+import { unitTypeOf, unitTypePatch, type UnitType } from "../shared/deviceKind";
+import { UnitTypeOptions } from "./AddSparkDialog";
 import { resolveSparkRole } from "../api/sparkRole";
 import { useModalPresence } from "../hooks/useModalPresence";
 import { useOverlayClose } from "../hooks/useOverlayClose";
@@ -86,6 +87,8 @@ export function EditSparkDialog({
   const [testResult, setTestResult] = useState<SparkTestResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [savedPasswordNote, setSavedPasswordNote] = useState<string | null>(null);
+  /** Secrets the server dropped on Save because the host changed (PATCH `credentialsCleared`). */
+  const [clearedCredentials, setClearedCredentials] = useState<string[] | null>(null);
 
   useEscape(onClose);
 
@@ -111,6 +114,7 @@ export function EditSparkDialog({
       setTestResult(null);
       setError(null);
       setSavedPasswordNote(null);
+      setClearedCredentials(null);
       return;
     }
     let cancelled = false;
@@ -298,8 +302,19 @@ export function EditSparkDialog({
           ...(password && sshTargetChanged ? { password } : {}),
         },
       };
-      await updateSpark(config.id, patch);
+      const res = await updateSpark(config.id, patch);
       onSaved();
+      const cleared = Array.isArray(res?.credentialsCleared) ? res.credentialsCleared.filter((x): x is string => typeof x === "string") : [];
+      if (cleared.length) {
+        // Stay open so the notice is read: the saved password and/or LLM API keys have to be entered again.
+        if (res.spark) {
+          setConfig(res.spark);
+          setSavedConfig(res.spark);
+        }
+        setPassword("");
+        setClearedCredentials(cleared);
+        return;
+      }
       onClose();
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : String(err));
@@ -379,9 +394,7 @@ export function EditSparkDialog({
                   value={unitTypeOf(config)}
                   onChange={(e) => update(unitTypePatch(e.target.value as UnitType, config))}
                 >
-                  {UNIT_TYPE_OPTIONS.map((o) => (
-                    <option key={o.value} value={o.value}>{o.value === "spark" ? t("unitTypes.spark") : o.value === "host" ? t("unitTypes.host") : t("unitTypes.windows")}</option>
-                  ))}
+                  <UnitTypeOptions />
                 </select>
               </div>
 
@@ -708,6 +721,9 @@ export function EditSparkDialog({
                       type="text"
                       value={config.ssh.user}
                       onChange={(e) => updateSsh({ user: e.target.value })}
+                      placeholder={t("add.sshUserPlaceholder")}
+                      autoComplete="off"
+                      spellCheck={false}
                     />
                   </div>
 
@@ -790,6 +806,18 @@ export function EditSparkDialog({
           )}
 
           {testResult && <TestResultList result={testResult} />}
+
+          {clearedCredentials && (
+            <p className="field-hint is-warn" role="status" data-testid="credentials-cleared">
+              {clearedCredentials.includes("sshPassword") && clearedCredentials.includes("llmApiKeys")
+                ? t("edit.credentialsClearedBoth")
+                : clearedCredentials.includes("sshPassword")
+                  ? t("edit.credentialsClearedPassword")
+                  : clearedCredentials.includes("llmApiKeys")
+                    ? t("edit.credentialsClearedKeys")
+                    : t("edit.credentialsClearedOther")}
+            </p>
+          )}
 
           {error && (
             <div className="modal-sheet__error">{error === "notFound" ? t("edit.notFound") : error === "passwordFirstError" ? t("edit.passwordFirstError") : error === "passwordRequiredError" ? t("edit.passwordRequiredError") : error}</div>

@@ -1,4 +1,5 @@
-import { describe, expect, it, vi } from "vitest";
+import { act } from "react";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { FleetEnergyCard } from "./FleetEnergyCard";
 import { flush, render } from "../../testing/render";
 import type { FleetEnergy } from "../../api/types";
@@ -117,5 +118,26 @@ describe("FleetEnergyCard states", () => {
     const failed = render(<FleetEnergyCard nodeCount={2} />);
     await flush();
     expect(failed.container.textContent).toContain("Energy telemetry unavailable: disk write failed");
+  });
+});
+
+describe("FleetEnergyCard polling", () => {
+  afterEach(() => vi.useRealTimers());
+
+  it("polls every 10 s only while the tab is visible", async () => {
+    vi.useFakeTimers();
+    fetchEnergy.mockResolvedValue(energy());
+    render(<FleetEnergyCard nodeCount={2} />);
+    await flush();
+    expect(fetchEnergy).toHaveBeenCalledTimes(1);
+    await act(async () => vi.advanceTimersByTime(10_000));
+    expect(fetchEnergy).toHaveBeenCalledTimes(2);
+    const visibility = vi.spyOn(document, "visibilityState", "get").mockReturnValue("hidden");
+    await act(async () => { document.dispatchEvent(new Event("visibilitychange")); });
+    await act(async () => vi.advanceTimersByTime(60_000));
+    expect(fetchEnergy).toHaveBeenCalledTimes(2);
+    visibility.mockReturnValue("visible");
+    await act(async () => { document.dispatchEvent(new Event("visibilitychange")); });
+    expect(fetchEnergy).toHaveBeenCalledTimes(3);
   });
 });

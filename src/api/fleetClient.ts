@@ -12,6 +12,7 @@ import type {
   FleetLogs,
   FleetOperation,
   FleetOperationRead,
+  FleetOperationsList,
   FleetOperationRequest,
   FleetStatus,
   FleetTargetsResponse,
@@ -65,6 +66,11 @@ export function startOperation(targetId: string, body: FleetOperationRequest): P
 export function readOperation(opId: string, since?: number): Promise<FleetOperationRead> {
   const query = since != null && Number.isFinite(since) ? `?since=${enc(String(since))}` : "";
   return apiFetch(`/api/fleet/operations/${enc(opId)}${query}`);
+}
+
+/** Operations still running (and, unless activeOnly, those finished in the last few minutes), newest first. */
+export function listOperations(activeOnly = true): Promise<FleetOperationsList> {
+  return apiFetch(`/api/fleet/operations${activeOnly ? "?active=1" : ""}`);
 }
 
 export function cancelOperation(opId: string): Promise<FleetCancelResult> {

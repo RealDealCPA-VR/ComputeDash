@@ -142,6 +142,7 @@ All responses are JSON. Error responses are `{ error: string, code?: string }`. 
 | `GET /api/fleet/targets` | – | `{ targets: FleetTarget[], generatedAt: number }` |
 | `GET /api/fleet/targets/:targetId/inventory` | `?refresh=1` | `FleetInventory` |
 | `POST /api/fleet/targets/:targetId/operations` | `{ action: "start"\|"stop"\|"reload"\|"switch", modelKey: string, force?: boolean, rollback?: boolean }` | `202 { operation: FleetOperation }`; `409` busy; `400` validation; `404` unknown target / model |
+| `GET /api/fleet/operations` | `?active=1` | `{ operations: FleetOperation[] }` newest first (added after the first build) |
 | `GET /api/fleet/operations/:opId` | `?since=<seq>` | `{ operation: FleetOperation, lines: {seq,text}[], nextSeq: number }` |
 | `DELETE /api/fleet/operations/:opId` | – | `{ cancelled: boolean }` (cancels the readiness wait; never kills a half-started engine) |
 | `GET /api/fleet/targets/:targetId/logs` | `?modelKey=` | `{ source: "launcher"\|"mac-agent"\|"none", lines: {seq,text}[], note?: string }` |
@@ -176,6 +177,8 @@ interface FleetTarget {
   clusterKind: "distributed"|"group"|null;
   capabilities: { distributedControl: boolean; lifecycle: boolean };
   servingCount: number|null;   // de-duplicated, null = unknown
+  servingModels: string[]|null; // added later: serving model ids, null iff servingCount null
+  activeOperationId: string|null; // added later: running operation on this target (or related node/cluster)
   busy: boolean;               // operation in flight
 }
 

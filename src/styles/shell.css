@@ -198,6 +198,13 @@ body {
 .rail-label--toggle:hover {
   color: var(--color-text);
 }
+/* Holds the current page, so it stays open: no pointer, no hover invite. */
+.rail-label--toggle[aria-disabled="true"] {
+  cursor: default;
+}
+.rail-label--toggle[aria-disabled="true"]:hover {
+  color: var(--color-muted);
+}
 .rail-settings {
   display: flex;
   align-items: center;
@@ -1095,4 +1102,122 @@ a.rail-item {
   margin-top: 4px;
   font-size: 12.5px;
   opacity: 0.75;
+}
+
+/* ─── Loading skeletons (shared) ─────────────────────── */
+.skel-row {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 10px 0;
+}
+.skel-bar {
+  display: block;
+  flex: 1;
+  height: 12px;
+  border-radius: 6px;
+  background: var(--color-surface-hover);
+  animation: skel-shimmer 1.4s ease-in-out infinite;
+}
+.skel-bar--s {
+  flex: none;
+  width: 64px;
+}
+.skel-card {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-height: 180px;
+  padding: 18px;
+}
+.page-fallback {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-width: 720px;
+  padding: 8px 0;
+}
+/* A view (or its code chunk) failed: reload prompt instead of a blank app. */
+.page-error {
+  max-width: 480px;
+  margin: 48px auto 0;
+  padding: 24px;
+  text-align: center;
+}
+.page-error__actions {
+  display: flex;
+  justify-content: center;
+  gap: 8px;
+  margin-top: 16px;
+}
+.page-error--floating {
+  position: fixed;
+  top: 16px;
+  right: 16px;
+  z-index: 80;
+  width: calc(100% - 32px);
+  margin: 0;
+  box-shadow: var(--shadow-shell);
+}
+@keyframes skel-shimmer {
+  50% {
+    opacity: 0.45;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .skel-bar {
+    animation: none;
+  }
+}
+
+/* ─── Running model operation chip (beside the connection banner) ─── */
+.op-chip-row {
+  display: flex;
+  justify-content: flex-end;
+  margin: 0 0 12px;
+}
+.op-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  max-width: 100%;
+  padding: 5px 12px;
+  border: 1px solid color-mix(in srgb, var(--color-accent) 40%, var(--color-border));
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--color-accent) 9%, var(--color-surface-elevated));
+  font-size: 12px;
+  font-weight: 550;
+  color: var(--color-text);
+  text-decoration: none;
+}
+.op-chip:hover {
+  border-color: var(--color-accent);
+}
+.op-chip:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 2px;
+}
+.op-chip__text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.op-chip__more {
+  flex: none;
+  color: var(--color-muted);
+}
+.op-chip__dot {
+  display: inline-block;
+  flex: none;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--color-accent);
+  animation: skel-shimmer 1.2s ease-in-out infinite;
+}
+@media (prefers-reduced-motion: reduce) {
+  .op-chip__dot {
+    animation: none;
+  }
 }

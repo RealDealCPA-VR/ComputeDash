@@ -4,7 +4,7 @@ The **Models** page (`/models`, also in the navigation rail and the command pale
 
 It is on by default. `fleetModelsEnabled: false` in Settings (or `PUT /api/settings`) hides the page, stops all collection for it, and makes every `/api/fleet/*` route answer `404`, except `GET /api/fleet/status` and reading or cancelling an operation that is already running.
 
-**Control needs an access token.** Reading targets and inventories works without one, but starting, stopping, reloading or switching a model, cancelling an operation, and creating, changing or deleting a cluster are refused with `403 token_required` until `SPARKDASH_TOKEN` is set. The page then shows a banner and locks its controls. See [Security](#security).
+**Control needs an access token.** Reading targets and inventories works without one, but starting, stopping, reloading or switching a model, cancelling an operation, and creating, changing or deleting a cluster are refused with `403 token_required` until `SPARKDASH_TOKEN` is set, even from a browser on the dashboard machine. The page then shows a banner and locks its controls. `npm run setup` creates the token in `.env`; restart the dashboard and enter the token when the browser asks. See [Security](#security).
 
 Design background: [PRD](PRD-CROSS-PLATFORM-MODEL-MANAGEMENT.md) and [development plan](FLEET-MODEL-MANAGER-PLAN.md). Where they differ from this guide, this guide follows the code.
 
@@ -197,7 +197,7 @@ The operation panel also shows each operation's own step log, which includes the
 
 ## HTTP API
 
-All routes are under the dashboard's normal authentication (see [Security](#security)). Bodies and responses are JSON. Errors are `{ "error": string, "code"?: string }`, also when the request fails before a route answers: malformed JSON gives `400` with code `invalid_json`, a body over the limit `413` with code `payload_too_large`, and an unexpected error there `500 { "error": "Request failed", "code": "internal_error" }`. Errors raised inside a route use that route's own code, for example `500 { "error": "Fleet request failed", "code": "internal" }` from the fleet routes and `proxy_error` from the smart-routing proxy. While `fleetModelsEnabled` is false, every route below answers `404` with code `disabled` (`fleet_disabled` on `/api/fleet/v1/*`), except `GET /api/fleet/status` and `GET` / `DELETE /api/fleet/operations/:opId`. Control routes (marked **control**) answer `403 token_required` while no dashboard token is configured. Rate limits, per client: the fleet reads (`targets`, `inventory`, `operations/:opId`, `logs`, `clusters`) share 240 requests per minute; cancels 60 per minute; everything under `/api/fleet/v1/*` 120 per minute. Starting an operation and changing a cluster spend the dashboard's limits for destructive actions, after the request body has been validated; a request that is then refused by the operation runner (`404`, `409`) or by the cluster store (`400`, `409`) has still spent its allowance. `GET /api/fleet/status`, `GET /api/fleet/routing` and `POST /api/fleet/routing/resolve` have no limiter. Over a limit the answer is `429`.
+All routes are under the dashboard's normal authentication (see [Security](#security)). Bodies and responses are JSON. Errors are `{ "error": string, "code"?: string }`, also when the request fails before a route answers: malformed JSON gives `400` with code `invalid_json`, a body over the limit `413` with code `payload_too_large`, and an unexpected error there `500 { "error": "Request failed", "code": "internal_error" }`. Errors raised inside a route use that route's own code, for example `500 { "error": "Fleet request failed", "code": "internal" }` from the fleet routes and `proxy_error` from the smart-routing proxy. While `fleetModelsEnabled` is false, every route below answers `404` with code `disabled` (`fleet_disabled` on `/api/fleet/v1/*`), except `GET /api/fleet/status` and `GET` / `DELETE /api/fleet/operations/:opId`. Control routes (marked **control**) answer `403 token_required` while no dashboard token is configured. Rate limits, per client: the fleet reads (`targets`, `inventory`, `operations`, `operations/:opId`, `logs`, `clusters`) share 240 requests per minute; cancels 60 per minute; everything under `/api/fleet/v1/*` 120 per minute. Starting an operation and changing a cluster spend the dashboard's limits for destructive actions, after the request body has been validated; a request that is then refused by the operation runner (`404`, `409`) or by the cluster store (`400`, `409`) has still spent its allowance. `GET /api/fleet/status`, `GET /api/fleet/routing` and `POST /api/fleet/routing/resolve` have no limiter. Over a limit the answer is `429`.
 
 | Method and path | Body / query | Success | Errors |
 | --- | --- | --- | --- |
@@ -205,6 +205,7 @@ All routes are under the dashboard's normal authentication (see [Security](#secu
 | `GET /api/fleet/targets` | – | `200 { targets: FleetTarget[], generatedAt }` | – |
 | `GET /api/fleet/targets/:targetId/inventory` | `?refresh=1` (`1`, `0`, `true`, `false`) | `200 FleetInventory` | `400` bad target id or `refresh`; `404` unknown target |
 | `POST /api/fleet/targets/:targetId/operations` (**control**) | `{ action: "start"\|"stop"\|"reload"\|"switch", modelKey, force?: boolean, rollback?: boolean }`; no other fields | `202 { operation: FleetOperation }` | `400` validation; `403 token_required`; `404` unknown target, or a model the cached inventory does not list; `409` busy; `503` shutting down |
+| `GET /api/fleet/operations` | `?active=1` (only running), `?active=0` or none (running plus those finished in the last 10 minutes) | `200 { operations: FleetOperation[] }`, newest first | `400 validation` (unknown query key or value) |
 | `GET /api/fleet/operations/:opId` | `?since=<seq>` | `200 { operation, lines: [{ seq, text }], nextSeq }` | `400` bad id; `404` unknown operation |
 | `DELETE /api/fleet/operations/:opId` (**control**) | – | `200 { cancelled: true }`, or `200 { cancelled: false, reason }` when the operation is not waiting for readiness, has finished, or a cancel was already requested | `400`; `403 token_required`; `404` |
 | `GET /api/fleet/targets/:targetId/logs` | `?modelKey=` | `200 { source: "launcher"\|"mac-agent"\|"none", lines, note? }` | `400`; `404` |
@@ -214,12 +215,13 @@ All routes are under the dashboard's normal authentication (see [Security](#secu
 | `DELETE /api/fleet/clusters/:id` (**control**) | – | `200 { removed: true }` | `400`; `403 token_required`; `404`; `409` busy |
 | `GET /api/fleet/routing` | – | `200 { enabled, policy, table: RouteEntry[] }` (`enabled: false`, empty table while routing is off) | – |
 | `POST /api/fleet/routing/resolve` | `{ model }` | `200 { target, targetId, endpoint, model, policy, load, reason }` (`target: null` when nothing serves it) | `400 invalid_body` / `invalid_model`; `401` when a token is set and not sent; `404 routing_disabled` |
-| `GET /api/fleet/v1/models` | – | `200 { object: "list", data: [{ id, object: "model", owned_by: "sparkdash-fleet" }] }` | `401` (non-loopback bind only); `403 token_required`; `404 routing_disabled`; `429` |
+| `GET /api/fleet/v1/models` | – | `200 { object: "list", data: [{ id, object: "model", owned_by: "sparkdash-fleet" }] }` | `401` (not direct local, see [Security](#security)); `403 token_required`; `404 routing_disabled`; `429` |
 | `POST /api/fleet/v1/chat/completions`, `/completions`, `/embeddings` | OpenAI request body, up to 4 MB | The engine's status and body, streamed | `400`; `401`; `403 token_required`; `404 model_not_served` / `routing_disabled`; `413` body over 4 MB; `429`; `502 upstream_unreachable`; `504 upstream_timeout` |
 
 The response types are defined in [`src/api/fleetTypes.ts`](../src/api/fleetTypes.ts). The main fields:
 
-- `FleetTarget`: `targetId`, `kind`, `id`, `name`, `platform`, `hardware { label, memoryTotalBytes, memoryKind }`, `online`, `health`, `memberIds`, `headId`, `clusterIds`, `clusterKind`, `capabilities { distributedControl, lifecycle }`, `servingCount`, `busy`.
+- `FleetTarget`: `targetId`, `kind`, `id`, `name`, `platform`, `hardware { label, memoryTotalBytes, memoryKind }`, `online`, `health`, `memberIds`, `headId`, `clusterIds`, `clusterKind`, `capabilities { distributedControl, lifecycle }`, `servingCount`, `servingModels` (model ids of the de-duplicated serving models, alphabetical; `null` exactly when `servingCount` is `null`), `busy`, `activeOperationId` (the running operation on this target, on a cluster it belongs to, or for a cluster on a member node; `null` when idle, so `busy === (activeOperationId !== null)`).
+- Freshness: `servingCount` and `servingModels` come from inventories at most 90 seconds old. While anyone reads targets or inventories (the Models page, the Overview's fleet board), the server refreshes inventories in the background every 60 seconds for the next 2 minutes; polling operation records does not count. Routing keeps its own stricter 60-second rule.
 - `FleetInventory`: `targetId`, `collectedAt`, `reachable`, `runtimes[]`, `models[]`, `clusterModels[]`, `errors[]`, `stale`.
 - `FleetRuntime`: `engine`, `port`, `endpoint`, `reachable`, `capabilities`, `error`, `requestsRunning`, `note` (why a capability is off).
 - `FleetModel`: `modelKey`, `modelId`, `label`, `engine`, `port`, `state`, `sources`, `quantization`, `contextLength`, `sizeBytes`, `estMemoryBytes`, `launcherId`, `macRuntime`, `endpoint`, `servedBy`, `actions { start, stop, reload, switchTo }`, `lastError`, `lastSeen?`.
@@ -239,7 +241,7 @@ Smart routing is a separate setting, **off by default** (`smartRoutingEnabled`).
 
 When it is on:
 
-- An OpenAI-compatible endpoint is available at `/api/fleet/v1` on the dashboard's own origin and port (for example `https://dell.tailnet.ts.net/api/fleet/v1`). Set it as the client's base URL and the dashboard token as the client's API key. A request to `/api/fleet/v1/*` goes through, in order: the dashboard's authentication middleware (the token is checked on every `POST`, and on a `GET` only when the bind is not loopback); the gate (fleet on, routing on, and a dashboard token configured on the server, else `403 token_required`); a limit of 120 requests per minute per client; and the JSON body limit of 4 MB (`413` above it). Nothing is buffered before the gate has passed. So on the default loopback bind, `GET /api/fleet/v1/models` answers without a bearer token (once a token is configured and routing is on); the routed `POST` requests always need it.
+- An OpenAI-compatible endpoint is available at `/api/fleet/v1` on the dashboard's own origin and port (for example `https://dell.tailnet.ts.net/api/fleet/v1`). Set it as the client's base URL and the dashboard token as the client's API key. A request to `/api/fleet/v1/*` goes through, in order: the dashboard's authentication middleware (the token is checked on every `POST`, and on a `GET` unless the request is direct local, from the dashboard machine itself); the gate (fleet on, routing on, and a dashboard token configured on the server, else `403 token_required`); a limit of 120 requests per minute per client; and the JSON body limit of 4 MB (`413` above it). Nothing is buffered before the gate has passed. So `GET /api/fleet/v1/models` answers a client on the dashboard machine without a bearer token (once a token is configured and routing is on), while a client coming through Tailscale Serve or a proxy needs it; the routed `POST` requests always need it.
 - The **Routing** panel on the Models page shows the state, the policy, the route table and a resolve tester.
 - Cached inventories are refreshed in the background every 30 seconds, so the route table stays fresh. This refresh does not run while routing is off.
 
@@ -264,12 +266,12 @@ When it is on:
 
 ## Security
 
-- **One authentication scheme.** The fleet routes and the proxy use the dashboard's global middleware. There is no separate fleet login. When `SPARKDASH_TOKEN` is set, every mutating request and the WebSocket need `Authorization: Bearer <token>` (or `?token=`). API reads (`GET`) need it only on a non-loopback bind.
-- **Reads on a loopback bind are not token-checked.** On the default loopback bind the token protects writes and the WebSocket; reads rely on the front door. Behind Tailscale Serve or a reverse proxy, every client the front door admits arrives through loopback and can read, without a token: targets, inventories, operation records and their logs, launcher and Mac agent output (`/api/fleet/targets/:targetId/logs`), clusters, the route table and `GET /api/fleet/v1/models`. (`POST /api/fleet/routing/resolve` is a `POST`, so it needs the bearer once a token is set.) Restrict who reaches the dashboard with the front door's identity policy (Tailscale ACLs or grants, or the proxy's authentication).
-- **Fleet control needs a token.** Elsewhere in the dashboard, a loopback-bound server without a token accepts every request that reaches it. Behind Tailscale Serve every tailnet device arrives through loopback, so fleet control does not rely on that: operations, cancel, cluster changes and the smart-routing proxy answer `403 token_required` until `SPARKDASH_TOKEN` is set. `GET /api/fleet/status` reports `controlRequiresToken` and `tokenConfigured`. On a single-user host that is reachable only on loopback (no Tailscale Serve, no proxy), `SPARKDASH_FLEET_ALLOW_NO_TOKEN=1` turns this requirement off; the server logs a warning at startup.
+- **One authentication scheme.** The fleet routes and the proxy use the dashboard's global middleware and its single token, `SPARKDASH_TOKEN`. There is no separate fleet login. The token travels as `Authorization: Bearer <token>`; `?token=` is accepted only on the WebSocket. The dashboard-wide rules are in [REMOTE-ACCESS.md](REMOTE-ACCESS.md#security-model): without a token, a browser on the dashboard machine itself (direct local) can read and change everything else, while requests through Tailscale Serve or a reverse proxy can only read. Once a token is set, every change needs it, and so do proxied reads.
+- **Fleet control always needs a token.** Operations, cancel, cluster changes and the smart-routing proxy answer `403 token_required` until `SPARKDASH_TOKEN` is set, whether the request is direct local or proxied. `GET /api/fleet/status` reports `controlRequiresToken` and `tokenConfigured`. `SPARKDASH_FLEET_ALLOW_NO_TOKEN=1` turns this requirement off; it is not recommended, and only makes sense on a single-user host that nothing else can reach (no Tailscale Serve, no proxy). The server logs a warning at startup when it is set.
+- **Reads.** With a token set, proxied clients need it to read targets, inventories, operation records and their logs, launcher and Mac agent output (`/api/fleet/targets/:targetId/logs`), clusters, the route table and `GET /api/fleet/v1/models`. Without a token, those reads are open to every client the front door admits, so limit who reaches the dashboard with the front door's identity policy (Tailscale ACLs or grants, or the proxy's authentication). Direct-local reads are never token-checked.
 - **Loopback by default.** The server binds `127.0.0.1`. Keep it that way.
-- **Publish through Tailscale Serve.** `tailscale serve --bg --https=443 http://127.0.0.1:5555` makes the dashboard available to your tailnet over HTTPS, with no open port (see the README's [Tailscale Serve](../README.md#tailscale-serve-https) section). Tailscale Serve forwards to loopback, so set `SPARKDASH_TOKEN` as well; fleet control stays refused until you do.
-- **Never expose unauthenticated control.** Do not bind `0.0.0.0` without a token, and do not publish the dashboard with `tailscale funnel` or a reverse proxy that does not authenticate. See [REMOTE-ACCESS.md](REMOTE-ACCESS.md).
+- **Publish through Tailscale Serve.** `tailscale serve --bg 5555` makes the dashboard available to your tailnet over HTTPS, with no open port (see the README's [Tailscale Serve](../README.md#tailscale-serve-https) section). Set `SPARKDASH_TOKEN` as well (`npm run setup`); fleet control stays refused until you do.
+- **Never expose unauthenticated control.** A non-loopback bind without a token refuses to start (unless `SPARKDASH_ALLOW_OPEN_REMOTE=1`, which is not recommended). Do not publish the dashboard with `tailscale funnel` or a reverse proxy that does not authenticate. See [REMOTE-ACCESS.md](REMOTE-ACCESS.md).
 - **What reaches the units.** Adapters call fixed URL paths and fixed command templates. Model ids are validated against a strict pattern and the discovered catalog before they reach a request body or an `lms` command, where they are single-quoted. Adapter requests refuse redirects, and their responses are capped at 2 MB. Engine API keys stay on the server.
 
 ## Hosting on Windows (Dell Precision)
@@ -286,21 +288,14 @@ The dashboard runs natively on Windows 11. These steps assume the Dell Precision
 ### Install and run
 
 ```powershell
-git clone <your fork> ComputeDash
+git clone https://github.com/RealDealCPA-VR/ComputeDash.git
 cd ComputeDash
 npm ci
+npm run setup
 npm run build
 ```
 
-Create `.env` in the repository root (it is read at startup):
-
-```ini
-SPARKDASH_TOKEN=<a long random string>
-```
-
-The token is required for fleet control (see [Security](#security)).
-
-Generate a token with Node, which works in any shell:
+`npm run setup` checks Node and `ssh`, reports this machine's Tailscale name, creates `.env` (read at startup) from `.env.example`, and adds a random `SPARKDASH_TOKEN` if none is set. It never replaces an existing token and can be run again at any time; `npm run setup -- --check` only reports, and `npm run setup -- --print-token` shows the token. The token is required for fleet control (see [Security](#security)). To create one by hand instead, add `SPARKDASH_TOKEN=<value>` to `.env`, with a value from:
 
 ```powershell
 node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
@@ -317,15 +312,15 @@ npm start
 Open `http://127.0.0.1:5555` on the Dell. To reach it from other devices, publish it with Tailscale Serve (from an administrator PowerShell if the command reports access denied):
 
 ```powershell
-tailscale serve --bg --https=443 http://127.0.0.1:5555
+tailscale serve --bg 5555
 tailscale serve status
 ```
 
-The browser asks for the token the first time it needs it. The dashboard has no Windows service installer; to keep it running after sign-out, start `npm start` from a scheduled task or a service wrapper of your choice.
+The browser asks for the token the first time it needs it and remembers it (**Settings → Access token** changes it). The dashboard has no Windows service installer. To start it at logon, `npm run setup` prints a ready-made `Register-ScheduledTask` snippet for this checkout and Node install; paste it into PowerShell (nothing is registered by setup itself). The snippet sets no execution time limit, so Task Scheduler does not stop the dashboard after 72 hours.
 
 ### What is not available on a Windows host
 
-- **The local unit.** Local collectors read Linux `/proc` and `/sys`. To monitor the Dell itself, enable its OpenSSH Server and add it as a **Windows PC** unit, like any other Windows machine.
+- **The local unit.** Local collectors read Linux `/proc` and `/sys`. To monitor the Dell itself, enable its OpenSSH Server and add it as a **Windows PC** unit, like any other Windows machine. Startup checks know this: on Windows (and macOS) they skip the `/proc`, `/sys` and Docker-mount warnings, and look for SSH keys in `%USERPROFILE%\.ssh`.
 - **Password SSH** (no `sshpass`).
 - **Container-only features**, such as the **Restart sparkDash** button, which restarts a Docker container.
 
@@ -405,8 +400,8 @@ Add tests under `server/fleet/__tests__/` with a fake `fetchImpl`; adapters neve
 | **Ready** times out | The engine did not list the model with a passing health check within 10 minutes (30 for a cluster). Open **Logs**; for a launch profile, its job output is in the operation log too. |
 | The operation panel says the outcome is unknown | The dashboard restarted, or the operation was pruned. Refresh the inventory to see the real state. |
 | `409` on an operation | Another operation runs on this target, a cluster containing it, or one of its members. Wait for it to finish. |
-| `403 token_required` on Start / Stop / Switch, cancel, cluster changes or `/api/fleet/v1` | No dashboard token is configured. Set `SPARKDASH_TOKEN` and restart. (`SPARKDASH_FLEET_ALLOW_NO_TOKEN=1` is only for single-user, loopback-only hosts.) |
-| `401` from fleet routes or `/api/fleet/v1` | `SPARKDASH_TOKEN` is set and a `POST` / `PUT` / `DELETE` (or, on a non-loopback bind, any request) has no valid `Authorization: Bearer` header. Use the token as the OpenAI client's API key. |
+| `403 token_required` on Start / Stop / Switch, cancel, cluster changes or `/api/fleet/v1` | No dashboard token is configured. Run `npm run setup` (or set `SPARKDASH_TOKEN` in `.env`) and restart. (`SPARKDASH_FLEET_ALLOW_NO_TOKEN=1` is only for single-user, loopback-only hosts, and not recommended.) |
+| `401` from fleet routes or `/api/fleet/v1` | `SPARKDASH_TOKEN` is set and a `POST` / `PUT` / `DELETE` (or any request through Tailscale Serve, a proxy or a non-loopback bind) has no valid `Authorization: Bearer` header. Use the token as the OpenAI client's API key. |
 | `400 invalid_json` or `413 payload_too_large` | The request body is not valid JSON, or is larger than the limit: 4 MB on `/api/fleet/v1/*`, 100 kB on the other routes. |
 | Cancel answers `cancelled: false` | Cancel is honoured only while the operation waits for readiness. Wait for the current stop or start to finish, then cancel again, or let it run. |
 | Switch or reload refused with `no_port` | The target is a launch profile without a port, so readiness cannot be verified. Set the profile's port. |

@@ -68,6 +68,14 @@ const manager = {
     return { ok: true, cluster: c };
   },
   removeCluster: (id) => clusters.delete(id),
+  listOperations: ({ activeOnly }) => {
+    calls.push(["listOperations", activeOnly]);
+    return { operations: activeOnly ? [OP] : [OP, { ...OP, id: "op-bbbbbbbbbbbb", status: "succeeded", finishedAt: 2 }] };
+  },
+  reads: 0,
+  noteRead() {
+    this.reads += 1;
+  },
 };
 
 let server;
@@ -375,4 +383,47 @@ test("the explicit opt-out allows control without a token", async () => {
   } finally {
     srv.close();
   }
+});
+
+test("GET /operations lists running (and recent) operations; the query is validated", async () => {
+  calls.length = 0;
+  const all = await call("GET", "/api/fleet/operations");
+  assert.equal(all.status, 200);
+  assert.deepEqual(all.body.operations.map((o) => o.id), [OP.id, "op-bbbbbbbbbbbb"]);
+  assert.deepEqual(all.body.operations[0], OP, "same shape as GET /operations/:opId's operation");
+  for (const q of ["1", "true"]) {
+    const r = await call("GET", `/api/fleet/operations?active=${q}`);
+    assert.equal(r.status, 200);
+    assert.deepEqual(r.body.operations.map((o) => o.id), [OP.id]);
+  }
+  assert.equal((await call("GET", "/api/fleet/operations?active=0")).body.operations.length, 2);
+  assert.deepEqual(calls, [["listOperations", false], ["listOperations", true], ["listOperations", true], ["listOperations", false]]);
+  for (const q of ["active=yes", "active=1&active=1", "active=", "since=3", "foo=1"]) {
+    const r = await call("GET", `/api/fleet/operations?${q}`);
+    assert.equal(r.status, 400, q);
+    assert.equal(r.body.code, "validation");
+  }
+  settings.fleetModelsEnabled = false;
+  try {
+    assert.equal((await call("GET", "/api/fleet/operations")).status, 404, "listing follows the feature flag");
+  } finally {
+    settings.fleetModelsEnabled = true;
+  }
+});
+
+test("fleet reads tell the manager someone is looking (background refresh)", async () => {
+  const before = manager.reads;
+  await call("GET", "/api/fleet/targets");
+  await call("GET", "/api/fleet/targets/node:spark1/inventory");
+  assert.equal(manager.reads, before + 2);
+  await call("GET", "/api/fleet/status");
+  assert.equal(manager.reads, before + 2, "the status probe does not count");
+});
+
+test("polling operation records does not keep background collection running", async () => {
+  const before = manager.reads;
+  await call("GET", "/api/fleet/operations?active=1");
+  await call("GET", "/api/fleet/operations");
+  await call("GET", "/api/fleet/operations/op-does-not-exist");
+  assert.equal(manager.reads, before, "the shell's operation chip polls these on every page");
 });

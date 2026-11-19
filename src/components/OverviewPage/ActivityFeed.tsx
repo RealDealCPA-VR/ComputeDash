@@ -43,7 +43,14 @@ export function ActivityFeed({ limit = 8, sparkId, onSelectSpark, onViewAll }: A
       </header>
 
       {loading && shown.length === 0 ? (
-        <p className="py-2 text-xs text-muted">{t("activity.loading")}</p>
+        <div aria-busy="true" aria-label={t("activity.loading")} role="status">
+          {[0, 1, 2].map((i) => (
+            <div key={i} className="skel-row">
+              <i className="skel-bar skel-bar--s" />
+              <i className="skel-bar" />
+            </div>
+          ))}
+        </div>
       ) : shown.length === 0 ? (
         <p className="py-2 text-xs text-muted">
           {error

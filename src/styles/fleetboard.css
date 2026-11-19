@@ -1,0 +1,263 @@
+/* Fleet board: the Overview's "what is each machine doing" table. Scoped under .fb. */
+
+.ov .fb {
+  gap: 12px;
+}
+.ov .fb .fb-updated {
+  font-size: 11.5px;
+  color: var(--color-muted);
+}
+.ov .fb .fb-empty {
+  margin: 0;
+  font-size: 12.5px;
+  color: var(--color-muted);
+}
+
+.ov .fb-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12.5px;
+}
+.ov .fb-table thead th {
+  padding: 0 10px 8px;
+  border-bottom: 1px solid var(--color-border);
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-align: left;
+  text-transform: uppercase;
+  color: var(--color-muted);
+}
+.ov .fb-table thead th:first-child {
+  padding-left: 0;
+}
+.ov .fb-row > .fb-cell {
+  padding: 10px;
+  border-bottom: 1px solid var(--color-border);
+  font-weight: 400;
+  text-align: left;
+  vertical-align: top;
+}
+.ov .fb-row > .fb-cell:first-child {
+  padding-left: 0;
+}
+.ov .fb-row:last-child > .fb-cell {
+  border-bottom: 0;
+}
+.ov .fb-row.is-busy {
+  background: color-mix(in srgb, var(--color-accent) 5%, transparent);
+}
+
+.ov .fb-machine__line {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+.ov .fb-machine__name {
+  overflow: hidden;
+  font-size: 13.5px;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--color-text-strong);
+  text-decoration: none;
+}
+.ov a.fb-machine__name:hover {
+  text-decoration: underline;
+}
+.ov .fb-kind {
+  flex: none;
+}
+.ov .fb-members {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px 10px;
+  margin: 6px 0 0 16px;
+  padding: 0;
+  list-style: none;
+  font-size: 11.5px;
+  color: var(--color-muted);
+}
+.ov .fb-members li {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+.ov .fb-members .sdot {
+  width: 6px;
+  height: 6px;
+  box-shadow: none;
+}
+
+.ov .fb-hw {
+  color: var(--color-text);
+}
+.ov .fb-sub {
+  display: block;
+  margin-top: 2px;
+  font-size: 11.5px;
+  color: var(--color-muted);
+}
+.ov .fb-faint {
+  color: var(--color-muted);
+}
+.ov .fb-strong {
+  color: var(--color-text);
+}
+
+.ov .fb-models {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.ov .fb-models code {
+  display: inline-block;
+  max-width: 100%;
+  overflow: hidden;
+  padding: 1px 7px;
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--color-accent) 11%, transparent);
+  font-family: "Geist Mono Variable", "Geist Mono", ui-monospace, monospace;
+  font-size: 12px;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  vertical-align: bottom;
+  color: var(--color-text-strong);
+}
+.ov .fb-unknown {
+  color: var(--color-warning);
+}
+.ov .fb-unknown--off {
+  color: var(--color-muted);
+}
+
+.ov .fb-live {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 140px;
+}
+.ov .fb-live__tps b {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--color-text-strong);
+}
+.ov .fb-mem {
+  display: grid;
+  grid-template-columns: auto minmax(40px, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  font-size: 11.5px;
+}
+.ov .fb-mem__bar > i {
+  background: var(--color-info);
+}
+.ov .fb-mem__bar > i.is-warn {
+  background: var(--color-warning);
+}
+.ov .fb-mem__bar > i.is-bad {
+  background: var(--color-danger);
+}
+
+.ov .fb-actions {
+  width: 1%;
+  white-space: nowrap;
+}
+.ov .fb-buttons {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 6px;
+}
+/* Loading the inventory: still focusable (aria-disabled), so the dialog can hand focus back. */
+.ov .fb-buttons .btn[aria-disabled="true"] {
+  opacity: 0.5;
+  cursor: progress;
+}
+.ov .fb-token {
+  align-self: center;
+  font-size: 11.5px;
+  color: var(--color-warning);
+}
+.ov .fb-progress {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+}
+.ov .fb-progress__text {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 2px 6px;
+  max-width: 260px;
+  white-space: normal;
+  color: var(--color-text);
+}
+.ov .fb-progress__text .fb-sub {
+  flex-basis: 100%;
+  margin: 0 0 0 14px;
+}
+.ov .fb-error {
+  margin: 6px 0 0;
+  max-width: 320px;
+  font-size: 11.5px;
+  white-space: normal;
+  color: var(--color-danger);
+}
+
+/* Narrow screens: each row becomes a card; cells label themselves. */
+@media (max-width: 760px) {
+  .ov .fb-table thead {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+  }
+  .ov .fb-table,
+  .ov .fb-table tbody,
+  .ov .fb-row,
+  .ov .fb-row > .fb-cell {
+    display: block;
+    width: 100%;
+  }
+  .ov .fb-row {
+    margin-bottom: 10px;
+    padding: 12px;
+    border: 1px solid var(--color-border);
+    border-radius: 12px;
+  }
+  .ov .fb-row:last-child {
+    margin-bottom: 0;
+  }
+  .ov .fb-row > .fb-cell,
+  .ov .fb-row > .fb-cell:first-child,
+  .ov .fb-row:last-child > .fb-cell {
+    padding: 6px 0;
+    border-bottom: 0;
+  }
+  .ov .fb-row > td.fb-cell[data-label]::before {
+    content: attr(data-label);
+    display: block;
+    margin-bottom: 3px;
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--color-muted);
+  }
+  .ov .fb-actions {
+    white-space: normal;
+  }
+  .ov .fb-buttons,
+  .ov .fb-progress {
+    justify-content: flex-start;
+  }
+}

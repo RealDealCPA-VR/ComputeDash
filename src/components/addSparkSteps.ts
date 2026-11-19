@@ -1,22 +1,26 @@
 import type { SparkConfig, SparkRole } from "../api/types";
 
-export const ADD_STEPS = ["Connect", "Role", "Services"] as const;
 export type AddStep = 0 | 1 | 2;
 
 export type AddSparkDraft = Omit<SparkConfig, "id">;
 
-/** Validation message for the Connect step, or null when it can advance. */
-export function validateConnect(config: AddSparkDraft): string | null {
-  if (!config.isLocal && !config.lanIp.trim()) return "LAN IP is required for a remote host";
-  if (!config.isLocal && config.ssh.auth === "pass" && !config.ssh.password) {
-    return "Password is required when SSH auth is Password";
-  }
+/**
+ * Why the Connect step cannot advance, or null when it can. A stable code rather than text, so the
+ * dialog translates it (devices.json `addValidation.*`) and this stays a pure, testable function.
+ */
+export type ConnectIssue = "lanIpRequired" | "passwordRequired";
+
+/** Why the Role step cannot advance, or null when it can. */
+export type RoleIssue = "nameRequired";
+
+export function validateConnect(config: AddSparkDraft): ConnectIssue | null {
+  if (!config.isLocal && !config.lanIp.trim()) return "lanIpRequired";
+  if (!config.isLocal && config.ssh.auth === "pass" && !config.ssh.password) return "passwordRequired";
   return null;
 }
 
-/** Validation message for the Role step, or null when it can advance. */
-export function validateRole(config: AddSparkDraft): string | null {
-  return config.name.trim() ? null : "Give this unit a name";
+export function validateRole(config: AddSparkDraft): RoleIssue | null {
+  return config.name.trim() ? null : "nameRequired";
 }
 
 /** Whether the "Next" / "Add" button for `step` should be enabled. */
@@ -41,4 +45,28 @@ export function parsePorts(text: string): number[] {
 
 export function slugifyId(name: string, now: number = Date.now()): string {
   return name.toLowerCase().replace(/[^a-z0-9]+/g, "-") || `spark-${now}`;
+}
+
+/** localStorage key for the SSH user of the last unit added successfully. */
+export const LAST_SSH_USER_KEY = "sparkdashLastSshUser";
+
+/** The SSH user remembered from the last successful add, or "" (storage can throw or be empty). */
+export function readLastSshUser(): string {
+  try {
+    const value = typeof localStorage !== "undefined" ? localStorage.getItem(LAST_SSH_USER_KEY) : null;
+    return typeof value === "string" ? value.trim() : "";
+  } catch {
+    return "";
+  }
+}
+
+/** Remember the SSH user of a unit that was just added (ignored when storage is unavailable). */
+export function rememberSshUser(user: string): void {
+  const value = user.trim();
+  if (!value) return;
+  try {
+    localStorage.setItem(LAST_SSH_USER_KEY, value);
+  } catch {
+    /* storage unavailable: the next dialog starts empty */
+  }
 }

@@ -10,10 +10,14 @@ import { CheckIcon, ChevronRightIcon, XIcon } from "./ui/icons";
 import {
   canAdvance,
   parsePorts,
+  readLastSshUser,
+  rememberSshUser,
   rolePatch,
   slugifyId,
   validateConnect,
+  validateRole,
   type AddStep,
+  type ConnectIssue,
 } from "./addSparkSteps";
 import { UNIT_TYPE_OPTIONS, unitTypeOf, unitTypePatch, type UnitType } from "../shared/deviceKind";
 import { TestResultList } from "./TestResultList";
@@ -50,8 +54,29 @@ const defaultConfig: Omit<SparkConfig, "id"> = {
   cx7Ip: "",
   isLocal: false,
   llmPorts: [8888],
-  ssh: { host: "", user: "zurih", auth: "key", port: 22 },
+  // No default user: the last user that worked is remembered (readLastSshUser) and pre-filled on open.
+  ssh: { host: "", user: "", auth: "key", port: 22 },
 };
+
+/** Options for the Unit type select, labelled from devices.json (shared with the Edit dialog). */
+export function UnitTypeOptions() {
+  const { t } = useTranslation("devices");
+  const label = (type: UnitType) => {
+    switch (type) {
+      case "spark": return t("unitTypes.spark");
+      case "host": return t("unitTypes.host");
+      case "mac": return t("unitTypes.mac");
+      case "windows": return t("unitTypes.windows");
+    }
+  };
+  return (
+    <>
+      {UNIT_TYPE_OPTIONS.map((o) => (
+        <option key={o.value} value={o.value}>{label(o.value)}</option>
+      ))}
+    </>
+  );
+}
 
 function sshPortValue(value: unknown): number {
   const n = typeof value === "number" ? value : Number.parseInt(String(value ?? ""), 10);
@@ -116,10 +141,11 @@ export function AddSparkDialog({ open, onClose, onAdded, defaultLlmPort = 8888 }
     };
   }, [mounted]);
 
-  // Pre-fill LLM ports from settings when dialog opens; always start at step 1.
+  // Pre-fill LLM ports from settings and the last SSH user that worked when the dialog opens; always start at step 1.
   useEffect(() => {
     if (open) {
-      setConfig((prev) => ({ ...prev, llmPorts: [defaultLlmPort] }));
+      const lastUser = readLastSshUser();
+      setConfig((prev) => ({ ...prev, llmPorts: [defaultLlmPort], ssh: { ...prev.ssh, user: prev.ssh.user || lastUser } }));
       setPortsText(String(defaultLlmPort));
       setStep(0);
       setError(null);
@@ -147,9 +173,16 @@ export function AddSparkDialog({ open, onClose, onAdded, defaultLlmPort = 8888 }
 
   const role = resolveSparkRole(config);
 
+  const connectIssueText = (issue: ConnectIssue) => {
+    switch (issue) {
+      case "lanIpRequired": return t("addValidation.lanIpRequired");
+      case "passwordRequired": return t("addValidation.passwordRequired");
+    }
+  };
+
   const buildPayload = (): SparkConfig => {
-    const connectError = validateConnect(config);
-    if (connectError && connectError.startsWith("Password")) throw new Error(connectError);
+    const connectIssue = validateConnect(config);
+    if (connectIssue === "passwordRequired") throw new Error(connectIssueText(connectIssue));
     return {
       ...config,
       id: slugifyId(config.name),
@@ -184,6 +217,7 @@ export function AddSparkDialog({ open, onClose, onAdded, defaultLlmPort = 8888 }
     try {
       const payload = buildPayload();
       await addSpark(payload);
+      if (!payload.isLocal) rememberSshUser(payload.ssh.user);
       onAdded();
       setConfig(defaultConfig);
       setStep(0);
@@ -206,6 +240,13 @@ export function AddSparkDialog({ open, onClose, onAdded, defaultLlmPort = 8888 }
   };
 
   const stepReady = canAdvance(step, config);
+  /** Why Next / Add is disabled, shown under the form and announced with the button. */
+  const blockedReason = (() => {
+    if (stepReady) return null;
+    const connectIssue = validateConnect(config);
+    if (step === 0 || (step === 2 && connectIssue)) return connectIssue ? connectIssueText(connectIssue) : null;
+    return validateRole(config) ? t("addValidation.nameRequired") : null;
+  })();
 
   return createPortal(
     <div
@@ -240,9 +281,7 @@ export function AddSparkDialog({ open, onClose, onAdded, defaultLlmPort = 8888 }
                   value={unitTypeOf(config)}
                   onChange={(e) => update(unitTypePatch(e.target.value as UnitType, config))}
                 >
-                  {UNIT_TYPE_OPTIONS.map((o) => (
-                    <option key={o.value} value={o.value}>{o.value === "spark" ? t("unitTypes.spark") : o.value === "host" ? t("unitTypes.host") : t("unitTypes.windows")}</option>
-                  ))}
+                  <UnitTypeOptions />
                 </select>
               </div>
 
@@ -315,6 +354,9 @@ export function AddSparkDialog({ open, onClose, onAdded, defaultLlmPort = 8888 }
                         type="text"
                         value={config.ssh.user}
                         onChange={(e) => updateSsh({ user: e.target.value })}
+                        placeholder={t("add.sshUserPlaceholder")}
+                        autoComplete="off"
+                        spellCheck={false}
                       />
                     </div>
                     <div className="field field--port">
@@ -512,6 +554,11 @@ export function AddSparkDialog({ open, onClose, onAdded, defaultLlmPort = 8888 }
             </>
           )}
 
+          {blockedReason && (
+            <p id="add-spark-blocked" className="field-hint">
+              {blockedReason}
+            </p>
+          )}
           {error && <div className="modal-sheet__error">{error}</div>}
         </div>
 
@@ -526,7 +573,13 @@ export function AddSparkDialog({ open, onClose, onAdded, defaultLlmPort = 8888 }
               </button>
             )}
             {step < 2 ? (
-              <button type="button" onClick={next} disabled={!stepReady} className="btn btn--primary">
+              <button
+                type="button"
+                onClick={next}
+                disabled={!stepReady}
+                aria-describedby={blockedReason ? "add-spark-blocked" : undefined}
+                className="btn btn--primary"
+              >
                 {t("add.next", { step: stepLabels[step + 1] })}
                 <ChevronRightIcon className="h-3.5 w-3.5" />
               </button>
@@ -535,6 +588,7 @@ export function AddSparkDialog({ open, onClose, onAdded, defaultLlmPort = 8888 }
                 type="button"
                 onClick={handleSave}
                 disabled={saving || !stepReady}
+                aria-describedby={blockedReason ? "add-spark-blocked" : undefined}
                 className="btn btn--primary"
               >
                 {saving ? t("actions.saving") : config.kind === "host" ? t("deviceLabels.addHost") : t("deviceLabels.addSpark")}

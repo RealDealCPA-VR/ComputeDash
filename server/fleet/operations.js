@@ -229,6 +229,30 @@ export class OperationRunner {
     return this.locks.has(targetId);
   }
 
+  /** @returns {Map<string, string>} lock id (target id) → id of the running operation holding it */
+  activeLocks() {
+    return new Map(this.locks);
+  }
+
+  /**
+   * Operations newest first (by startedAt): every running one, plus, unless `activeOnly`, those
+   * that finished within the last `recentMs`. Same shape as read(id).operation.
+   * @param {{ activeOnly?: boolean, recentMs?: number }} [opts]
+   * @returns {FleetOperation[]}
+   */
+  list({ activeOnly = false, recentMs = 10 * 60_000 } = {}) {
+    const now = this.now();
+    const out = [];
+    for (const rec of this.records.values()) {
+      const op = rec.op;
+      const keep =
+        op.status === "running" ||
+        (!activeOnly && Number.isFinite(op.finishedAt) && now - /** @type {number} */ (op.finishedAt) <= recentMs);
+      if (keep) out.push(snapshotOp(op));
+    }
+    return out.sort((a, b) => b.startedAt - a.startedAt || (a.id < b.id ? 1 : a.id > b.id ? -1 : 0));
+  }
+
   /**
    * Operation phase for one model while an operation acts on it.
    * @returns {"start"|"stop"|null}

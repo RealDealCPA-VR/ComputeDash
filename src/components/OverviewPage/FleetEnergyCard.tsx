@@ -1,12 +1,14 @@
 import { RestartButton } from "../ui/RestartButton";
 import { AppLink } from "../ui/AppLink";
 import { ENERGY_ID, idToPath } from "../../constants";
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { useVisiblePolling } from "../../hooks/useVisiblePolling";
 import { useTranslation } from "react-i18next";
 import { fetchFleetEnergy } from "../../api/client";
 import type { FleetEnergy, FleetWallEnergy } from "../../api/types";
 
 const DAY_MS = 86_400_000;
+export const ENERGY_POLL_MS = 10_000;
 
 function number(value: number | null, digits = 2): string {
   return value == null ? "—" : value.toFixed(digits);
@@ -34,15 +36,15 @@ export function FleetEnergyCard({
   const [data, setData] = useState<FleetEnergy | null>(null);
   const [error, setError] = useState<string | null>(null);
 
+  const alive = useRef(true);
   useEffect(() => {
-    let cancelled = false;
-    const load = () => fetchFleetEnergy()
-      .then((next) => { if (!cancelled) { setData(next); setError(null); } })
-      .catch((err) => { if (!cancelled) setError(err instanceof Error ? err.message : String(err)); });
-    void load();
-    const timer = window.setInterval(load, 10_000);
-    return () => { cancelled = true; window.clearInterval(timer); };
+    alive.current = true;
+    return () => { alive.current = false; };
   }, []);
+  const load = useCallback(() => fetchFleetEnergy()
+    .then((next) => { if (alive.current) { setData(next); setError(null); } })
+    .catch((err) => { if (alive.current) setError(err instanceof Error ? err.message : String(err)); }), []);
+  useVisiblePolling(load, ENERGY_POLL_MS);
 
   // With power meters configured the card shows wall power (gaps filled from the estimate).
   // The share filled from the estimate is said out loud, so a meter outage is not read as measured.
@@ -71,12 +73,13 @@ export function FleetEnergyCard({
         ? t("energy.partialHelpWall", { stale: stale.length ? t("energy.noFreshReading", { nodes: stale.join(", ") }) : "" })
         : t("energy.partialHelp", { stale: stale.length ? t("energy.noFreshReading", { nodes: stale.join(", ") }) : "" })
       : null;
+  const loading = !data && !error;
   const state = error
     ? t("energy.unavailable", { error })
     : data?.membershipChanged
       ? t("energy.membershipChanged")
       : !data
-        ? t("energy.loading")
+        ? null
         : freshCount < nodeCount
           ? t("energy.partialCoverage", { fresh: freshCount, total: nodeCount })
           : view?.energy24hKwh == null
@@ -109,6 +112,14 @@ export function FleetEnergyCard({
           ) : null}
         </p>
       )}
+      {loading ? (
+        <div role="status" aria-busy="true" aria-label={t("energy.loading")}>
+          <div className="skel-row">
+            <i className="skel-bar skel-bar--s" />
+            <i className="skel-bar" />
+          </div>
+        </div>
+      ) : null}
       {data?.membershipChanged && !error ? <RestartButton /> : null}
       <div>
         <div className="big-num">{number(view?.energy24hKwh ?? null)}<small>{t("energy.kwhPer24Hours")}</small></div>

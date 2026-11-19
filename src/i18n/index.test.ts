@@ -41,6 +41,31 @@ describe("language preference", () => {
   });
 });
 
+describe("on-demand catalogs", () => {
+  it("bundles English only and loads Simplified Chinese when the language is switched", async () => {
+    vi.resetModules();
+    localStorage.setItem(LOCALE_STORAGE_KEY, "en");
+    const fresh = await import("./index");
+    await fresh.i18nReady;
+    expect(fresh.i18n.hasResourceBundle("en", "shell")).toBe(true);
+    expect(fresh.i18n.hasResourceBundle("zh-CN", "shell")).toBe(false);
+    await fresh.setLocale("zh-CN");
+    expect(fresh.i18n.hasResourceBundle("zh-CN", "shell")).toBe(true);
+    expect(fresh.i18n.getFixedT("zh-CN", "shell")("nav.overview")).toBe("总览");
+    await fresh.setLocale("en");
+  }, 30_000);
+
+  it("starts in a stored non-English language once its catalogs are in", async () => {
+    vi.resetModules();
+    localStorage.setItem(LOCALE_STORAGE_KEY, "zh-CN");
+    const fresh = await import("./index");
+    await fresh.i18nReady;
+    expect(fresh.i18n.resolvedLanguage).toBe("zh-CN");
+    expect(fresh.i18n.getFixedT(null, "shell")("nav.overview")).toBe("总览");
+    await fresh.setLocale("en");
+  }, 30_000);
+});
+
 describe("English source and plain i18next formatting", () => {
   it("falls back to the English catalog when a Chinese entry is unavailable", async () => {
     i18n.addResourceBundle("en", "fixture", { greeting: "Hello, {{name}}", items_one: "{{count}} item", items_other: "{{count}} items" });

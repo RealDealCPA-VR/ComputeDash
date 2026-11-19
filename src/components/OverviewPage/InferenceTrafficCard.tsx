@@ -1,11 +1,13 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { fetchInferenceActivity } from "../../api/client";
 import type { InferenceActivity } from "../../api/types";
+import { useVisiblePolling } from "../../hooks/useVisiblePolling";
 import { ActivityIcon } from "../ui/icons";
 import { Panel } from "../ui/Panel";
 
 const NO_RESPONSE_TIMEOUT_MS = 30_000;
+export const TRAFFIC_POLL_MS = 5_000;
 
 function safeLabel(value: string, labels: string[], unknownLabel: string): string {
   return /^[a-zA-Z0-9][a-zA-Z0-9._-]{0,63}$/.test(value) &&
@@ -20,35 +22,36 @@ export function InferenceTrafficCard() {
   const { t } = useTranslation("overview");
   const [activity, setActivity] = useState<InferenceActivity | null>(null);
   const [failed, setFailed] = useState(false);
+  /** The server reports the source off: the card hides and polling stops. */
+  const [disabled, setDisabled] = useState(false);
+  const alive = useRef(true);
+  const staleTimer = useRef<number | undefined>(undefined);
   useEffect(() => {
-    let alive = true;
-    let loading = false;
-    let disabled = false;
-    let staleTimer: number | undefined;
-    const load = async () => {
-      if (loading || disabled) return;
-      loading = true;
-      try {
-        const next = await fetchInferenceActivity();
-        if (!alive) return;
-        disabled = next.enabled === false;
-        setActivity(next);
-        setFailed(false);
-        window.clearTimeout(staleTimer);
-        // Expire a stalled transport, not the server's sample using the client's clock.
-        if (next.available) staleTimer = window.setTimeout(() => {
-          if (alive) setFailed(true);
-        }, NO_RESPONSE_TIMEOUT_MS);
-      } catch {
-        if (alive) setFailed(true);
-      } finally {
-        loading = false;
-      }
+    alive.current = true;
+    return () => {
+      alive.current = false;
+      window.clearTimeout(staleTimer.current);
     };
-    void load();
-    const timer = window.setInterval(() => { void load(); }, 5000);
-    return () => { alive = false; window.clearInterval(timer); window.clearTimeout(staleTimer); };
   }, []);
+
+  const load = useCallback(async () => {
+    try {
+      const next = await fetchInferenceActivity();
+      if (!alive.current) return;
+      setDisabled(next.enabled === false);
+      setActivity(next);
+      setFailed(false);
+      window.clearTimeout(staleTimer.current);
+      // Expire a stalled transport, not the server's sample using the client's clock.
+      if (next.available) staleTimer.current = window.setTimeout(() => {
+        if (alive.current) setFailed(true);
+      }, NO_RESPONSE_TIMEOUT_MS);
+    } catch {
+      if (alive.current) setFailed(true);
+    }
+  }, []);
+  // Visibility-aware and non-overlapping: a hidden tab costs nothing, a slow answer is never doubled.
+  useVisiblePolling(load, TRAFFIC_POLL_MS, { enabled: !disabled });
 
   if (activity?.enabled === false) return null;
   const available = activity?.available === true && !failed;

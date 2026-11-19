@@ -56,6 +56,13 @@ export interface FleetTarget {
   servingCount: number | null;
   /** An operation is in flight. */
   busy: boolean;
+  /**
+   * Names (modelId) of the de-duplicated models in "serving" state, serving first then alphabetical;
+   * null = unknown (no fresh inventory). Older servers omit it.
+   */
+  servingModels?: string[] | null;
+  /** Id of the operation in flight on this target (or a member node), null when idle. Older servers omit it. */
+  activeOperationId?: string | null;
 }
 
 export interface FleetRuntime {
@@ -198,6 +205,11 @@ export interface FleetStatus {
 export interface FleetCancelResult {
   cancelled: boolean;
   reason?: string | null;
+}
+
+/** GET /api/fleet/operations: operations still running, plus those finished in the last few minutes. */
+export interface FleetOperationsList {
+  operations: FleetOperation[];
 }
 
 export interface FleetTargetsResponse {

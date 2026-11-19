@@ -1,6 +1,6 @@
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
-import "./i18n";
+import { i18nReady } from "./i18n";
 import App from "./App";
 import "@fontsource-variable/geist";
 import "@fontsource-variable/geist-mono";
@@ -27,8 +27,12 @@ if ("serviceWorker" in navigator) {
   });
 }
 
-createRoot(document.getElementById("root")!).render(
-  <StrictMode>
-    <App />
-  </StrictMode>,
-);
+// A saved non-English language loads its catalogs first (English is bundled and ready at once),
+// so the first paint is already in the user's language.
+void i18nReady.then(() => {
+  createRoot(document.getElementById("root")!).render(
+    <StrictMode>
+      <App />
+    </StrictMode>,
+  );
+});
