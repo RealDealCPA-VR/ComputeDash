@@ -168,9 +168,11 @@ test("hardening: every discovery command is read-only (list/probe, never pull, s
   for (const cmd of commands) {
     // The first word is a reader; a docker command may only list or run `ollama list`.
     const body = cmd.replaceAll(" 2>/dev/null", "");
-    assert.match(body, /^(find|ls|docker (ps|exec \S+ ollama list)) /, cmd);
+    assert.match(body, /^(find|ls|docker (ps|exec \S+ ollama list))( |$)/, cmd);
     // No writes: no redirects, substitutions, or verbs that pull, start, stop or delete.
-    assert.doesNotMatch(body, /\b(pull|run|start|stop|rm|push|create)\b|[>]|\$\(|`/, cmd);
+    // The file name find searches for (`-name start.sh`) is data, not a verb.
+    const verbs = body.replace(/ -name (start|stop)\.sh\b/g, " -name SCRIPT_FILE");
+    assert.doesNotMatch(verbs, /\b(pull|run|start|stop|rm|push|create)\b|[>]|\$\(|`/, cmd);
   }
 });
 

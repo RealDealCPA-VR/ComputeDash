@@ -47,6 +47,7 @@ git diff --name-only --diff-filter=M "$(git merge-base HEAD upstream/main)"
 - `server/config.js`
 - `server/health.js`
 - `server/index.js`
+- `server/models/__tests__/discovery.test.js`
 - `server/settings.js`
 - `server/sparks/SparkRegistry.js`
 - `server/sparks/__tests__/auth-and-targets.test.js`
