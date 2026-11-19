@@ -44,6 +44,7 @@ import {
   ExpandIcon,
   KeyIcon,
   DiskIcon,
+  LayersIcon,
 } from "./components/ui/icons";
 import { ConnectionBanner } from "./components/ui/ConnectionBanner";
 import { ErrorBanner } from "./components/ui/ErrorBanner";
@@ -58,6 +59,7 @@ import {
   COST_ID,
   KIOSK_ID,
   API_KEYS_ID,
+  MODELS_ID,
   benchId,
   benchTypeOf,
   idToPath,
@@ -67,6 +69,7 @@ import {
 import { TokensPage } from "./components/TokensPage/TokensPage";
 import { CostPage } from "./components/CostPage/CostPage";
 import { ApiKeysPage } from "./components/ApiKeysPage/ApiKeysPage";
+import { ModelsPage } from "./components/ModelsPage/ModelsPage";
 import { EnergyPage } from "./components/EnergyPage/EnergyPage";
 import { TempsPage } from "./components/TempsPage/TempsPage";
 import { ActivityPage } from "./components/ActivityPage/ActivityPage";
@@ -287,6 +290,8 @@ function DashboardApp() {
 
   const isOverview = activeId === OVERVIEW_ID;
   const apiKeysEnabled = settings?.apiKeysEnabled === true;
+  // Fleet Model Manager: on unless Settings turns it off.
+  const fleetModelsEnabled = settings?.fleetModelsEnabled !== false;
   const onPage = isPageId(activeId);
   const benchType = benchTypeOf(activeId);
   const hideWorkers = settings?.hideWorkers ?? false;
@@ -483,6 +488,11 @@ function DashboardApp() {
     if (settings && activeId === API_KEYS_ID && !apiKeysEnabled) navigate(OVERVIEW_ID);
   }, [settings, activeId, apiKeysEnabled, navigate]);
 
+  // Same for the Models page while fleet model management is turned off.
+  useEffect(() => {
+    if (settings && activeId === MODELS_ID && !fleetModelsEnabled) navigate(OVERVIEW_ID);
+  }, [settings, activeId, fleetModelsEnabled, navigate]);
+
   const paletteCommands = useMemo<PaletteCommand[]>(() => {
     const cmds: PaletteCommand[] = [
       { id: "nav:overview", group: t("commands.goTo"), label: t("nav.overview"), hint: t("nav.fleet"), icon: <GridIcon className="h-4 w-4" />, keywords: "Overview home fleet", run: () => navigate(OVERVIEW_ID) },
@@ -533,11 +543,14 @@ function DashboardApp() {
       { id: "act:settings", group: t("commands.actions"), label: t("commands.settings"), icon: <GearIcon className="h-4 w-4" />, keywords: "Open settings preferences density refresh", run: () => setShowSettings(true) },
       { id: "act:harness", group: t("commands.actions"), label: t("commands.harness"), icon: <BotIcon className="h-4 w-4" />, keywords: "Set up harness sessions occupancy openclaw opencode hermes oh-my-pi wizard", run: () => { setHarnessSparkId(undefined); setShowHarness(true); } }
     );
+    if (fleetModelsEnabled) {
+      cmds.push({ id: "nav:models", group: t("commands.goTo"), label: t("nav.models"), hint: t("commands.page"), icon: <LayersIcon className="h-4 w-4" />, keywords: "models model manager fleet switch start stop reload load unload cluster ollama vllm lm studio llama.cpp mlx", run: () => navigate(MODELS_ID) });
+    }
     if (apiKeysEnabled) {
       cmds.push({ id: "nav:apikeys", group: t("commands.goTo"), label: t("nav.apiKeys"), hint: t("commands.page"), icon: <KeyIcon className="h-4 w-4" />, keywords: "api keys litellm virtual keys spend budget", run: () => navigate(API_KEYS_ID) });
     }
     return cmds;
-  }, [displaySparks, displayActive, navigate, toggleSidebar, t, benchLabels, apiKeysEnabled]);
+  }, [displaySparks, displayActive, navigate, toggleSidebar, t, benchLabels, apiKeysEnabled, fleetModelsEnabled]);
 
   return (
     <div className="min-h-screen text-text">
@@ -557,6 +570,7 @@ function DashboardApp() {
           refreshInterval={refreshInterval}
           authMode={authMode}
           showApiKeys={apiKeysEnabled}
+          showModels={fleetModelsEnabled}
         />
         <div className="side-strip" aria-hidden={!sideHidden}>
           <button type="button" className="icon-circle" onClick={toggleSidebar} tabIndex={sideHidden ? 0 : -1} title={t("nav.showSidebarTitle")} aria-label={t("nav.showSidebar")}>
@@ -604,6 +618,8 @@ function DashboardApp() {
                 <CostPage />
               ) : activeId === API_KEYS_ID ? (
                 apiKeysEnabled ? <ApiKeysPage /> : null
+              ) : activeId === MODELS_ID ? (
+                fleetModelsEnabled ? <ModelsPage /> : null
               ) : activeId === ENERGY_ID ? (
                 <EnergyPage sparks={displaySparks} settings={settings} onSelectSpark={navigate} />
               ) : activeId === TEMPS_ID ? (
@@ -679,6 +695,7 @@ function DashboardApp() {
         onAdd={() => setShowAdd(true)}
         onOpenSettings={() => setShowSettings(true)}
         showApiKeys={apiKeysEnabled}
+        showModels={fleetModelsEnabled}
       />
       <InstallPrompt />
       <CommandPalette open={showPalette} onClose={() => setShowPalette(false)} commands={paletteCommands} />

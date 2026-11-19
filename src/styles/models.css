@@ -1,0 +1,499 @@
+/* Models page (Fleet Model Manager). Builds on the tk-* page, card and table styles; everything is mm-*. */
+.mm .mm-head {
+  align-items: flex-end;
+}
+.mm .page-head__tools {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+.mm-faint {
+  margin: 0;
+  font-size: 12.5px;
+  color: var(--color-faint);
+}
+
+/* Two columns: target list, detail. One column on narrow screens. */
+.mm .mm-layout {
+  display: grid;
+  grid-template-columns: minmax(220px, 280px) minmax(0, 1fr);
+  gap: 18px;
+  align-items: start;
+}
+@media (max-width: 900px) {
+  .mm .mm-layout {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+/* Target list */
+.mm .mm-targets {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 14px;
+}
+.mm .mm-targets__label {
+  margin: 4px 4px 0;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--color-muted);
+}
+.mm .mm-targets__list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.mm .mm-target {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  width: 100%;
+  padding: 9px 11px;
+  border: 1px solid var(--color-border);
+  border-radius: 10px;
+  background: var(--color-surface);
+  color: var(--color-text);
+  text-align: left;
+  cursor: pointer;
+  transition: border-color 0.15s, background 0.15s;
+}
+.mm .mm-target:hover {
+  background: var(--color-surface-hover);
+}
+.mm .mm-target.is-active {
+  border-color: var(--color-accent);
+  box-shadow: 0 0 0 2px var(--color-accent-soft);
+}
+.mm .mm-target__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.mm .mm-target__name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 600;
+  color: var(--color-text-strong);
+}
+.mm .mm-target__meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 10px;
+  font-size: 11.5px;
+  color: var(--color-muted);
+}
+
+/* Cluster kind: a real distributed deployment is visibly different from a visual group. */
+.mm-kind {
+  display: inline-block;
+  padding: 0 6px;
+  border-radius: 6px;
+  font-size: 11px;
+  font-weight: 600;
+}
+.mm-kind--distributed {
+  border: 1px solid var(--color-violet);
+  color: var(--color-violet);
+}
+.mm-kind--group,
+.mm-kind--unknown {
+  border: 1px dashed var(--color-border-strong);
+  color: var(--color-muted);
+}
+
+/* States: uncertain readings (unknown, unreachable) also get a dashed outline, so they never read as "stopped". */
+.mm-state--uncertain {
+  outline: 1px dashed currentColor;
+  outline-offset: -1px;
+}
+.mm .mm-health--unknown {
+  outline: 1px dashed var(--color-border-strong);
+  outline-offset: -1px;
+}
+
+/* Detail */
+.mm .mm-detail {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  min-width: 0;
+}
+.mm .mm-detail__tools {
+  flex-wrap: wrap;
+}
+.mm .mm-note {
+  margin: 0;
+  font-size: 12.5px;
+  color: var(--color-muted-strong);
+}
+.mm .mm-alert {
+  padding: 10px 12px;
+  border: 1px solid color-mix(in srgb, var(--color-danger) 40%, transparent);
+  border-radius: 10px;
+}
+.mm .mm-warn {
+  margin: 0;
+  padding: 8px 12px;
+  border-radius: 10px;
+  border: 1px solid color-mix(in srgb, var(--color-warning) 40%, transparent);
+  background: color-mix(in srgb, var(--color-warning) 10%, transparent);
+  font-size: 12.5px;
+  color: var(--color-warning);
+}
+.mm .mm-warn--bad {
+  border-color: color-mix(in srgb, var(--color-danger) 40%, transparent);
+  background: color-mix(in srgb, var(--color-danger) 10%, transparent);
+  color: var(--color-danger);
+}
+.mm .mm-errors {
+  font-size: 12.5px;
+  color: var(--color-danger);
+}
+.mm .mm-errors__title {
+  margin: 0 0 4px;
+  font-weight: 600;
+}
+.mm .mm-errors ul {
+  margin: 0;
+  padding-left: 1.1rem;
+  list-style: disc;
+  font-family: var(--font-mono, ui-monospace, monospace);
+  word-break: break-word;
+}
+.mm .mm-collected {
+  font-size: 11.5px;
+}
+
+/* Runtimes strip */
+.mm .mm-runtimes {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.mm .mm-runtime {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 8px;
+  padding: 6px 10px;
+  border: 1px solid var(--color-border);
+  border-radius: 10px;
+  background: var(--color-surface-elevated);
+  font-size: 12px;
+}
+.mm .mm-runtime__engine {
+  font-weight: 600;
+  color: var(--color-text-strong);
+}
+.mm .mm-runtime__endpoint {
+  font-family: var(--font-mono, ui-monospace, monospace);
+  color: var(--color-muted);
+}
+.mm .mm-runtime__error {
+  color: var(--color-danger);
+}
+
+/* Model table */
+.mm .mm-table td {
+  vertical-align: top;
+}
+.mm .mm-num {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+.mm .mm-unknown {
+  color: var(--color-muted);
+  font-style: italic;
+}
+.mm .mm-model__label {
+  font-weight: 600;
+  color: var(--color-text-strong);
+}
+.mm .mm-sub {
+  display: block;
+  max-width: 28rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-size: 11.5px;
+  color: var(--color-muted);
+}
+.mm .mm-sub--err {
+  white-space: normal;
+  color: var(--color-danger);
+}
+.mm .mm-row-actions {
+  display: flex;
+  flex-wrap: nowrap;
+  gap: 6px;
+}
+.mm .mm-served-by {
+  color: var(--color-muted-strong);
+  font-style: italic;
+}
+
+/* Operation panel */
+.mm .mm-op {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 16px 18px;
+}
+.mm .mm-op__head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 8px 16px;
+}
+.mm .mm-op__title {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--color-text-strong);
+}
+.mm .mm-op__sub {
+  margin: 2px 0 0;
+  font-size: 12px;
+  color: var(--color-muted);
+}
+.mm .mm-op__tools {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.mm .mm-op__error {
+  margin: 0;
+  font-size: 12.5px;
+  color: var(--color-danger);
+}
+.mm .mm-op__note {
+  margin: 0;
+  font-size: 12px;
+  color: var(--color-warning);
+}
+.mm .mm-steps {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.mm .mm-step {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 10px;
+  font-size: 12.5px;
+}
+.mm .mm-step[aria-current="step"] .mm-step__label {
+  font-weight: 600;
+  color: var(--color-text-strong);
+}
+.mm .mm-step__detail {
+  flex-basis: 100%;
+  padding-left: 4px;
+  font-size: 11.5px;
+  color: var(--color-muted);
+  word-break: break-word;
+}
+.mm .mm-step--failed .mm-step__detail {
+  color: var(--color-danger);
+}
+
+/* Dialogs (portaled to body, so not under .mm) */
+.mm-dialog .field-hint {
+  display: block;
+}
+.mm-dialog .mm-faint {
+  font-size: 12.5px;
+  color: var(--color-faint);
+}
+.mm-dialog .mm-subhead {
+  margin: 4px 0 0;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--color-muted);
+}
+.mm-dialog .mm-switch__current {
+  margin: 0;
+  font-size: 13px;
+}
+.mm-dialog .mm-switch__k {
+  color: var(--color-muted);
+}
+.mm-dialog .mm-switch__list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  min-width: 0;
+}
+.mm-dialog .mm-switch__option {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 10px;
+  padding: 8px 10px;
+  border: 1px solid var(--color-border);
+  border-radius: 10px;
+  font-size: 13px;
+  cursor: pointer;
+}
+.mm-dialog .mm-switch__option.is-selected {
+  border-color: var(--color-accent);
+  box-shadow: 0 0 0 2px var(--color-accent-soft);
+}
+.mm-dialog .mm-switch__name {
+  flex: 1 1 12rem;
+  min-width: 0;
+  font-weight: 600;
+  word-break: break-word;
+}
+.mm-dialog .mm-switch__meta {
+  font-size: 12px;
+  color: var(--color-muted);
+}
+.mm-dialog .mm-switch__capacity {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 10px;
+  padding: 8px 10px;
+  border-radius: 10px;
+  font-size: 12.5px;
+  background: var(--color-surface-elevated);
+}
+.mm-dialog .mm-switch__capacity--exceeds {
+  color: var(--color-warning);
+  background: color-mix(in srgb, var(--color-warning) 10%, transparent);
+}
+.mm-dialog .mm-switch__capacity--unknown {
+  color: var(--color-muted-strong);
+}
+.mm-dialog .mm-switch__review p {
+  margin: 0 0 6px;
+}
+.mm-dialog .mm-switch__summary {
+  margin: 0;
+  padding-left: 1.1rem;
+  list-style: disc;
+  font-size: 12.5px;
+  color: var(--color-muted-strong);
+}
+.mm-dialog .mm-logs__note {
+  margin: 0;
+  font-size: 12.5px;
+  color: var(--color-muted-strong);
+}
+.mm-dialog .mm-cluster-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.mm-dialog .mm-cluster {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 10px 12px;
+  border: 1px solid var(--color-border);
+  border-radius: 10px;
+}
+.mm-dialog .mm-cluster__head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 10px;
+}
+.mm-dialog .mm-cluster__name {
+  font-weight: 600;
+  color: var(--color-text-strong);
+}
+.mm-dialog .mm-cluster__meta {
+  margin: 0;
+  font-size: 12px;
+  color: var(--color-muted);
+}
+.mm-dialog .mm-cluster__tools {
+  display: flex;
+  gap: 6px;
+  margin-top: 4px;
+}
+.mm-dialog .mm-cluster-form {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.mm-dialog .mm-cluster-form__members {
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+.mm-dialog .mm-textarea {
+  min-height: 3.5rem;
+  padding: 0.5rem 0.8rem;
+  border: 1px solid var(--color-border-strong);
+  border-radius: 10px;
+  background: var(--color-surface-elevated);
+  color: var(--color-text);
+  font: inherit;
+  font-size: 0.8125rem;
+  resize: vertical;
+}
+.mm-dialog .mm-validation {
+  margin: 0;
+  padding-left: 1.1rem;
+  list-style: disc;
+}
+
+/* Review additions: stale table, runtime hints, last seen, cancel confirmation. */
+.mm .mm-stale {
+  opacity: 0.6;
+}
+.mm .mm-runtime__requests {
+  color: var(--color-muted-strong);
+}
+.mm .mm-runtime__note {
+  flex-basis: 100%;
+  font-size: 11.5px;
+  color: var(--color-muted);
+}
+.mm .mm-last-seen {
+  font-style: italic;
+}
+.mm .mm-op__confirm {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px 12px;
+  padding: 10px 12px;
+  border: 1px solid color-mix(in srgb, var(--color-danger) 35%, transparent);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--color-danger) 8%, transparent);
+  font-size: 12.5px;
+}
+.mm .mm-op__confirm p {
+  margin: 0;
+}
+.mm .mm-op__confirm-actions {
+  display: flex;
+  gap: 6px;
+}

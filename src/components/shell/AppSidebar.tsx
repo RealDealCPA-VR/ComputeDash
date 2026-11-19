@@ -21,9 +21,9 @@ import {
 import { CSS } from "@dnd-kit/utilities";
 import type { AuthMode, SparkSnapshot } from "../../api/types";
 import { isWorkerSpark } from "../../api/sparkRole";
-import { ACTIVITY_ID, API_KEYS_ID, benchId, COST_ID, ENERGY_ID, idToPath, KIOSK_ID, OVERVIEW_ID, SHOWCASE_ID, STORAGE_ID, TEMPS_ID, TOKENS_ID } from "../../constants";
+import { ACTIVITY_ID, API_KEYS_ID, benchId, COST_ID, ENERGY_ID, idToPath, KIOSK_ID, MODELS_ID, OVERVIEW_ID, SHOWCASE_ID, STORAGE_ID, TEMPS_ID, TOKENS_ID } from "../../constants";
 import { NAV_BENCH_TYPES, benchNavActive } from "../bench/benchCatalog";
-import { BoltIcon, ChevronDownIcon, CoinsIcon, DiskIcon, ExpandIcon, GearIcon, GithubIcon, GlobeIcon, GridIcon, KeyIcon, ListIcon, PanelLeftIcon, PlusIcon, SearchIcon, TerminalIcon, ThermometerIcon, TokensIcon, XLogoIcon } from "../ui/icons";
+import { BoltIcon, ChevronDownIcon, CoinsIcon, DiskIcon, ExpandIcon, GearIcon, GithubIcon, GlobeIcon, GridIcon, KeyIcon, LayersIcon, ListIcon, PanelLeftIcon, PlusIcon, SearchIcon, TerminalIcon, ThermometerIcon, TokensIcon, XLogoIcon } from "../ui/icons";
 import { OpenAccessChip } from "../OpenAccessChip";
 import { ThemeSwitch } from "../ThemeSwitch";
 import { isThrottling, railSubLabel } from "./sparkSummary";
@@ -49,6 +49,8 @@ interface AppSidebarProps {
   onCollapse?: () => void;
   /** Show the opt-in API Keys entry (Settings → API Keys). */
   showApiKeys?: boolean;
+  /** Show the Models page entry (Fleet Model Manager; on unless Settings turns it off). */
+  showModels?: boolean;
 }
 
 /**
@@ -184,6 +186,7 @@ export function AppSidebar({
   authMode = null,
   onCollapse,
   showApiKeys = false,
+  showModels = false,
 }: AppSidebarProps) {
   const { t } = useTranslation("shell");
   const benchLabels = useBenchLabels();
@@ -352,6 +355,17 @@ export function AppSidebar({
             <GridIcon className="h-4 w-4" />
             <span className="rail-item__name">{t("nav.overview")}</span>
           </a>
+          {showModels ? (
+            <a
+              href={idToPath(MODELS_ID)}
+              className={`rail-item ${activeId === MODELS_ID ? "is-active" : ""}`}
+              onClick={inApp(() => onSelect(MODELS_ID))}
+              aria-current={activeId === MODELS_ID ? "page" : undefined}
+            >
+              <LayersIcon className="h-4 w-4" />
+              <span className="rail-item__name">{t("nav.models")}</span>
+            </a>
+          ) : null}
           <a
             href={idToPath(TOKENS_ID)}
             className={`rail-item ${activeId === TOKENS_ID ? "is-active" : ""}`}

@@ -5,6 +5,7 @@ import { MobileTabBar } from "./MobileTabBar";
 import { CommandPalette, filterCommands, fuzzyScore, type PaletteCommand } from "./CommandPalette";
 import { railSubLabel, showcaseTarget } from "./sparkSummary";
 import { makeSpark } from "../../testing/fixtures";
+import { MODELS_ID } from "../../constants";
 import { render } from "../../testing/render";
 
 const cmd = (id: string, label: string, group = "Go to", run = () => {}): PaletteCommand => ({ id, group, label, run });
@@ -90,6 +91,35 @@ describe("AppSidebar", () => {
     expect(off.container.querySelector('a[href="/api-keys"]')).toBeNull();
     const on = render(<AppSidebar {...props} showApiKeys />);
     expect(on.container.querySelector('a[href="/api-keys"]')?.textContent).toContain("API Keys");
+  });
+
+  it("shows the Models entry only when enabled, and selects it in-app", () => {
+    const onSelect = vi.fn();
+    const props = { sparks: [makeSpark()], activeId: null, onSelect, onAdd: vi.fn(), onOpenSettings: vi.fn(), onOpenSearch: vi.fn(), connected: true };
+    const off = render(<AppSidebar {...props} />);
+    expect(off.container.querySelector('a[href="/models"]')).toBeNull();
+    const on = render(<AppSidebar {...props} showModels activeId={MODELS_ID} />);
+    const link = on.container.querySelector<HTMLAnchorElement>('a[href="/models"]')!;
+    expect(link.textContent).toContain("Models");
+    expect(link.getAttribute("aria-current")).toBe("page");
+    act(() => link.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, button: 0 })));
+    expect(onSelect).toHaveBeenCalledWith(MODELS_ID);
+  });
+
+  it("lists Models in the mobile Stats sheet only when enabled", () => {
+    const openStats = (showModels: boolean) => {
+      const { container } = render(
+        <MobileTabBar sparks={[makeSpark()]} activeId={MODELS_ID} onSelect={() => {}} onAdd={() => {}} onOpenSettings={() => {}} showModels={showModels} />
+      );
+      const stats = Array.from(container.querySelectorAll<HTMLButtonElement>(".tabbar button")).find((b) => b.textContent?.includes("Stats"))!;
+      expect(stats.getAttribute("aria-current")).toBe(showModels ? "page" : null);
+      act(() => stats.click());
+      const names = Array.from(document.body.querySelectorAll(".sheet .rail-item__name")).map((n) => n.textContent);
+      act(() => document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape" })));
+      return names;
+    };
+    expect(openStats(false)).not.toContain("Models");
+    expect(openStats(true)).toContain("Models");
   });
 
   it("links the Temps page with a deep-linkable href", () => {

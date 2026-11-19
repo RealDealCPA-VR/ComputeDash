@@ -575,3 +575,14 @@ export function CopyIcon({ className = "" }: { className?: string }) {
     </svg>
   );
 }
+
+/** Stacked layers, for the Models page (models across the fleet). */
+export function LayersIcon({ className = "" }: { className?: string }) {
+  return (
+    <svg {...baseProps(className)}>
+      <path d="m12 3 9 4.5-9 4.5-9-4.5z" />
+      <path d="m3 12 9 4.5 9-4.5" />
+      <path d="m3 16.5 9 4.5 9-4.5" />
+    </svg>
+  );
+}
