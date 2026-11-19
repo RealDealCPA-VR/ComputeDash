@@ -9,11 +9,12 @@ import { decodeClixml, powershellCommand } from "./windowsMetrics.js";
 import { execFile } from "child_process";
 import crypto from "crypto";
 import fs from "fs";
+import os from "os";
+import path from "path";
 import {
   COMFY_PORT,
   COMFY_PROBE_TIMEOUT_MS,
   SSH_CONNECT_TIMEOUT,
-  SSH_MULTIPLEX,
 } from "../config.js";
 import { isAllowedTargetHost, isValidSshUser, normalizeSshPort } from "../validate.js";
 import { llmProbeHost } from "./llmHost.js";
@@ -33,14 +34,87 @@ const _multiplexStates = new Map();
 // held. Reconnecting per command is no fix there — it leaks on every new connection too
 // (#2476) and brings back #73's session churn.
 const WINDOWS_MASTER_MAX_AGE_MS = 60 * 60 * 1000;
-// Keep the private directory short even on macOS, where TMPDIR can already
-// consume most of a Unix socket's 104-byte path limit.
-const _controlDir = fs.mkdtempSync("/tmp/sparkdash-ssh-");
 const _controlSalt = crypto.randomBytes(32);
 
 /** ssh's own exit code for transport-level failures (dropped connection, auth). */
 const SSH_TRANSPORT_EXIT = 255;
-fs.chmodSync(_controlDir, 0o700);
+
+/**
+ * Whether commands reuse one SSH connection per unit (ControlMaster).
+ * Precedence: SSH_MULTIPLEX=0 turns it off everywhere; any other non-empty
+ * SSH_MULTIPLEX value turns it on everywhere; unset (or empty) means on,
+ * except on a native Windows dashboard host, whose ssh.exe (Win32-OpenSSH)
+ * does not support control sockets. Read per call so the env always wins.
+ */
+export function multiplexEnabled({ platform = process.platform, env = process.env } = {}) {
+  const configured = env.SSH_MULTIPLEX;
+  if (configured === "0") return false;
+  if (configured) return true;
+  return platform !== "win32";
+}
+
+/**
+ * Where the private control-socket directory lives. POSIX keeps the short
+ * /tmp even on macOS, where TMPDIR can already consume most of a Unix
+ * socket's 104-byte path limit. Windows has no /tmp (it would resolve to
+ * C:\tmp), so it uses the system temp directory.
+ */
+export function controlDirBase({ platform = process.platform, tmpdir = os.tmpdir } = {}) {
+  return platform === "win32" ? tmpdir() : "/tmp";
+}
+
+/**
+ * Creates the private control-socket directory, or returns null (after one
+ * warning) when that fails, in which case connections are not reused.
+ */
+export function createControlDir({ platform = process.platform, tmpdir = os.tmpdir, fsImpl = fs, warn = console.warn } = {}) {
+  const base = controlDirBase({ platform, tmpdir });
+  try {
+    const dir = fsImpl.mkdtempSync(path.join(base, "sparkdash-ssh-"));
+    fsImpl.chmodSync(dir, 0o700);
+    return dir;
+  } catch (error) {
+    warn(`[ssh] connection reuse is off: cannot create a control-socket directory in ${base} (${error.message})`);
+    return null;
+  }
+}
+
+// undefined: not created yet; null: creation failed, so no multiplexing.
+let _controlDir;
+let _controlDirWarned = false;
+
+function warnControlDirOnce(message) {
+  if (_controlDirWarned) return;
+  _controlDirWarned = true;
+  console.warn(message);
+}
+
+/** The control-socket directory, created on first use; null when unavailable. */
+function ensureControlDir() {
+  if (_controlDir === undefined) {
+    _controlDir = createControlDir({ warn: warnControlDirOnce });
+    if (_controlDir) {
+      const dir = _controlDir;
+      process.once("exit", () => {
+        try {
+          fs.rmSync(dir, { recursive: true, force: true });
+        } catch {
+          // ControlPersist bounds any master left behind by an abrupt shutdown.
+        }
+      });
+    }
+  }
+  if (!_controlDir) return null;
+  try {
+    // Recreate it if something (a tmp cleaner) removed it since.
+    fs.mkdirSync(_controlDir, { recursive: true, mode: 0o700 });
+    fs.chmodSync(_controlDir, 0o700);
+  } catch (error) {
+    warnControlDirOnce(`[ssh] connection reuse is off: cannot use ${_controlDir} (${error.message})`);
+    return null;
+  }
+  return _controlDir;
+}
 
 function controlPersistSeconds() {
   const configured = Number.parseInt(
@@ -48,11 +122,6 @@ function controlPersistSeconds() {
     10
   );
   return Number.isFinite(configured) ? Math.min(3600, Math.max(0, configured)) : 60;
-}
-
-function ensureControlDir() {
-  fs.mkdirSync(_controlDir, { recursive: true, mode: 0o700 });
-  fs.chmodSync(_controlDir, 0o700);
 }
 
 /**
@@ -64,7 +133,8 @@ export function sshMultiplexConfig(spark, targetHost, user, auth, password, port
   const persistSeconds = controlPersistSeconds();
   if (persistSeconds === 0) return null;
 
-  ensureControlDir();
+  const controlDir = ensureControlDir();
+  if (!controlDir) return null;
   const identityFile = process.env.SSH_IDENTITY_FILE || "default";
   const sshPort = normalizeSshPort(port) ?? 22;
   const isolation = [spark.id, user, targetHost, String(sshPort), auth || "key", identityFile, password || ""];
@@ -88,7 +158,8 @@ export function sshMultiplexConfig(spark, targetHost, user, auth, password, port
       "-o",
       `ControlPersist=${persistSeconds}`,
       "-o",
-      `ControlPath=${_controlDir}/${digest}`,
+      // Forward slashes: ssh treats a backslash in an -o value as an escape.
+      `ControlPath=${controlDir.split(path.sep).join("/")}/${digest}`,
     ],
   };
 }
@@ -125,14 +196,6 @@ export async function ensureMultiplexReady(config, establish) {
 export function invalidateMultiplex(config) {
   if (config) _multiplexStates.delete(config.key);
 }
-
-process.once("exit", () => {
-  try {
-    fs.rmSync(_controlDir, { recursive: true, force: true });
-  } catch {
-    // ControlPersist bounds any master left behind by an abrupt shutdown.
-  }
-});
 
 function sshpassAvailable() {
   if (_sshpassAvailable !== null) return _sshpassAvailable;
@@ -220,7 +283,7 @@ export function sshCommandSpec(spark, opts = {}) {
 
   const remote = `${user}@${targetHost}`;
   const multiplex =
-    opts.multiplex === false || !SSH_MULTIPLEX
+    opts.multiplex === false || !multiplexEnabled()
       ? null
       : sshMultiplexConfig(spark, targetHost, user, auth, password, sshPort);
   // The readiness gate and command must use the same socket and persistence.

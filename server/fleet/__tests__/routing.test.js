@@ -8,6 +8,7 @@ import {
   pickTarget,
   rankTargets,
   DEFAULT_ROUTING_POLICY,
+  isLoopbackEndpoint,
 } from "../routing.js";
 
 const NOW = 1_000_000;
@@ -250,4 +251,29 @@ test("least-loaded adds the proxy's in-flight requests to known loads; unknown l
   // a: 1+2=3, b: 2 → b first; unknown loads after, ordered by in-flight then id.
   assert.deepEqual(r.ranked.map((t) => t.targetId), ["node:b", "node:a", "node:d", "node:c"]);
   assert.match(r.reason, /least loaded \(2 running\)/);
+});
+
+test("models reached only through an SSH tunnel are never routable (the tunnel is temporary)", () => {
+  const inventories = [
+    inv("node:a", [rt(8000, "http://127.0.0.1:41234", { via: "ssh-tunnel" })], [model("llama", 8000)]),
+    inv("node:b", [rt(8000, "http://10.0.0.2:8000", { via: "direct" })], [model("llama", 8000)]),
+  ];
+  const table = buildRouteTable(inventories, [target("node:a"), target("node:b")], { now: NOW });
+  assert.equal(table.length, 1);
+  assert.deepEqual(table[0].targets.map((t) => t.targetId), ["node:b"]);
+});
+
+test("a loopback endpoint of unknown origin is not routable; direct loopback and unknown LAN endpoints are", () => {
+  assert.equal(isLoopbackEndpoint("http://127.0.0.1:8000"), true);
+  assert.equal(isLoopbackEndpoint("http://localhost:8000"), true);
+  assert.equal(isLoopbackEndpoint("http://[::1]:8000"), true);
+  assert.equal(isLoopbackEndpoint("http://10.0.0.2:8000"), false);
+  assert.equal(isLoopbackEndpoint("not a url"), false);
+  const inventories = [
+    inv("node:a", [rt(8000, "http://127.0.0.1:41234", { via: null })], [model("ghost", 8000)]),
+    inv("node:b", [rt(8000, "http://127.0.0.1:8000", { via: "direct" })], [model("local", 8000)]),
+    inv("node:c", [rt(8000, "http://10.0.0.3:8000", { via: null })], [model("lan", 8000)]),
+  ];
+  const table = buildRouteTable(inventories, [target("node:a"), target("node:b"), target("node:c")], { now: NOW });
+  assert.deepEqual(table.map((e) => e.model).sort(), ["lan", "local"]);
 });

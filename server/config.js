@@ -95,10 +95,9 @@ const COMFY_PROBE_TIMEOUT_MS = parseInt(process.env.COMFY_PROBE_TIMEOUT_MS || "3
 const TAILSCALE_PROBE_TIMEOUT_MS = parseInt(process.env.TAILSCALE_PROBE_TIMEOUT_MS || "8000", 10);
 const ATTIC_PROBE_TIMEOUT_MS = parseInt(process.env.ATTIC_PROBE_TIMEOUT_MS || "8000", 10);
 const SSH_CONNECT_TIMEOUT = 5; // seconds
-// Reuse one authenticated SSH connection per Spark instead of dialing a new one
-// for every collector tick. Set SSH_MULTIPLEX=0 to go back to one connection
-// per command (e.g. an sshd with `MaxSessions 1`).
-const SSH_MULTIPLEX = process.env.SSH_MULTIPLEX !== "0";
+// SSH connection reuse (SSH_MULTIPLEX) is resolved per call by multiplexEnabled()
+// in collectors/ssh.js: on by default, off by default on Windows, SSH_MULTIPLEX=0
+// turns it off everywhere (e.g. an sshd with `MaxSessions 1`).
 
 // ─── Poll intervals (milliseconds) ───────────────────────
 // The fast domains (GPU, CPU/RAM, network, LLM, ComfyUI, bandwidth) follow
@@ -270,7 +269,6 @@ export {
   TAILSCALE_PROBE_TIMEOUT_MS,
   ATTIC_PROBE_TIMEOUT_MS,
   SSH_CONNECT_TIMEOUT,
-  SSH_MULTIPLEX,
   POLL_INTERVAL_GPU,
   POLL_INTERVAL_CPU,
   POLL_INTERVAL_NETWORK,

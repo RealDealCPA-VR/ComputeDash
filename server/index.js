@@ -24,7 +24,7 @@ import {
   validateDecodeContextBudget,
   validatePrefillBudget,
 } from "./validate.js";
-import { authStatus, authorizeUpgrade, createAuthMiddleware, createHostGuardMiddleware, isLoopbackBind, setTailscaleName } from "./auth.js";
+import { authStatus, authorizeUpgrade, configuredToken, createAuthMiddleware, createHostGuardMiddleware, isLoopbackBind, setTailscaleName } from "./auth.js";
 import { inspectHealth } from "./health.js";
 import { getSettings, updateSettings, loadSettings } from "./settings.js";
 import { MqttPublisher } from "./mqtt/MqttPublisher.js";
@@ -85,6 +85,10 @@ import { ToolEvalStore } from "./tooleval/ToolEvalStore.js";
 import { ToolEvalManager } from "./tooleval/ToolEvalManager.js";
 import { registerToolEvalRoutes } from "./tooleval/routes.js";
 import { registerApiKeysRoutes } from "./apiKeys/routes.js";
+import { ClusterStore } from "./fleet/clusterStore.js";
+import { FleetModelManager } from "./fleet/FleetModelManager.js";
+import { registerFleetRoutes } from "./fleet/routes.js";
+import { registerFleetRoutingRoutes } from "./fleet/routingRoutes.js";
 import { benchEvent } from "./events/eventFormat.js";
 import {
   createFleetEnergyRuntime,
@@ -431,6 +435,8 @@ const allowToolEval = createRateLimiter(30, 60_000);
 
 // ─── Monitor map ─────────────────────────────────────────
 const monitors = new Map();
+/** Fleet Model Manager (created with the routes below); stream samples pause during its operations. */
+let fleetModels = null;
 
 /** True while a bench, showcase or model launch owns the unit: stream-samples pause. */
 function llmStreamSampleBlocked(sparkId) {
@@ -439,7 +445,8 @@ function llmStreamSampleBlocked(sparkId) {
     prefillBenchManager.getActive(sparkId) ||
     qualityBenchManager.getActive(sparkId) ||
     showcaseManager.getActive(sparkId) ||
-    launcherManager.activeJob(sparkId)
+    launcherManager.activeJob(sparkId) ||
+    fleetModels?.isUnitBusy(sparkId)
   );
 }
 
@@ -553,6 +560,30 @@ const alertsRuntime = createAlertsRuntime({
 const app = express();
 const server = createServer(app);
 
+// The smart-routing proxy carries whole chat / embeddings requests; the default 100 kB
+// JSON limit would turn long prompts into 413s. Nothing is buffered before the caller is
+// authenticated, the feature and routing are on, a dashboard token exists (fleet control
+// rule, see fleet/routes.js) and the caller is within its rate: only then is the body
+// parsed with the larger limit, and the global parser below skips it.
+const allowFleetProxy = createRateLimiter(120, 60_000);
+function fleetProxyGate(req, res, next) {
+  const s = getSettings();
+  if (s.fleetModelsEnabled === false) {
+    return res.status(404).json({ error: "Fleet model management is disabled", code: "fleet_disabled" });
+  }
+  if (s.smartRoutingEnabled !== true) {
+    return res.status(404).json({ error: "Smart routing is disabled", code: "routing_disabled" });
+  }
+  if (process.env.SPARKDASH_FLEET_ALLOW_NO_TOKEN !== "1" && !configuredToken()) {
+    return res.status(403).json({
+      error: "The smart-routing proxy requires a dashboard access token. Set SPARKDASH_TOKEN and restart.",
+      code: "token_required",
+    });
+  }
+  if (!allowFleetProxy(principalKey(req))) return rejectLimited(res, "Too many routed requests; try again shortly");
+  next();
+}
+app.use("/api/fleet/v1", createAuthMiddleware(), fleetProxyGate, express.json({ limit: "4mb" }));
 app.use(express.json());
 // Registered ahead of the auth middleware: a remote browser holding no token
 // (or a stale one) must still be able to learn that it needs one.
@@ -2598,6 +2629,52 @@ registerStorageRoutes(app, {
   }),
 });
 
+// ─── Fleet Model Manager (Settings → Models; on by default) ───
+// Inventory and start / stop / switch / reload of models across nodes and logical clusters
+// (docs/FLEET-MODEL-MANAGER-PLAN.md). Same global auth; mutating routes share the destructive
+// limiters, reads have their own bucket because the operation panel polls every second.
+const fleetClusterStore = new ClusterStore({
+  file: process.env.FLEET_CLUSTERS_JSON_PATH || path.join(ROOT, "config", "fleet-clusters.json"),
+  getUnitIds: () => registry.sparkIds,
+});
+fleetClusterStore.pruneMissingUnits();
+fleetModels = new FleetModelManager({
+  registry,
+  monitors,
+  clusterStore: fleetClusterStore,
+  launcherStore,
+  launcherManager,
+  launcherStatuses: (spark, launchers) => cachedLauncherStatuses(spark, launchers),
+  recordEvent,
+  getSettings,
+  // Direct LAN / loopback first, else an SSH tunnel; the manager closes every tunnel it opens.
+  resolveTarget: (unit, port, opts) => resolveLlmHttpTarget(unit, port, { apiKey: opts?.apiKey ?? null }),
+});
+registry.onChange((action, spark) => fleetModels?.onRegistryChange(action, spark));
+const allowFleetRead = createRateLimiter(240, 60_000);
+/** Cancel has its own bucket: a cancel must not be starved by (or starve) start / switch requests. */
+const allowFleetCancel = createRateLimiter(60, 60_000);
+registerFleetRoutes(app, {
+  manager: fleetModels,
+  getSettings,
+  allowRead: (req) => allowFleetRead(principalKey(req)),
+  allowChange: (req) => allowDestructive(principalKey(req)) && allowGlobalDestructive(clientKey(req)),
+  allowCancel: (req) => allowFleetCancel(principalKey(req)),
+  rejectLimited,
+});
+// Optional smart routing (P1). Registered after registerFleetRoutes so its
+// fleetModelsEnabled gate covers these routes too; the routes themselves answer
+// 404 while smartRoutingEnabled is off and never change which models run.
+// /api/fleet/v1/* is already authenticated, gated and rate-limited by fleetProxyGate.
+registerFleetRoutingRoutes(app, {
+  getSettings,
+  getInventories: async () => fleetModels.cachedInventories(),
+  getTargets: () => fleetModels.targets(),
+  allowProxy: () => true,
+  rejectLimited,
+  getApiKey: (targetId, port) => fleetModels.apiKeyFor(targetId, port),
+});
+
 app.post("/api/sparks/:id/wake", async (req, res) => {
   try {
     const spark = registry.getSpark(req.params.id);
@@ -2976,6 +3053,11 @@ async function shutdown(signal) {
     );
   } catch (err) {
     console.error("[sparkDash] failed to finalize benchmarks:", err.message);
+  }
+  try {
+    fleetModels?.shutdown();
+  } catch (err) {
+    console.error("[sparkDash] failed to stop fleet operations:", err.message);
   }
   try {
     launcherManager.shutdown();

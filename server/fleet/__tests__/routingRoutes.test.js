@@ -87,7 +87,7 @@ function inventory(targetId, endpoint, models, { load = 0, collectedAt = Date.no
     targetId,
     collectedAt,
     reachable: true,
-    runtimes: [{ engine: "vllm", port: 8000, endpoint, reachable: true, capabilities: {}, error: null, requestsRunning: load }],
+    runtimes: [{ engine: "vllm", port: 8000, endpoint, reachable: true, capabilities: {}, error: null, requestsRunning: load, via: "direct" }],
     models: models.map((modelId) => ({ modelKey: `vllm|8000|${modelId}`, modelId, label: modelId, engine: "vllm", port: 8000, state: "serving", sources: ["api"], servedBy: null })),
     clusterModels: [],
     errors: [],

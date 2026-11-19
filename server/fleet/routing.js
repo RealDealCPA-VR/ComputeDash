@@ -35,6 +35,22 @@ export function normalizePolicy(policy) {
 const byTargetId = (a, b) =>
   a.targetId < b.targetId ? -1 : a.targetId > b.targetId ? 1 : a.endpoint < b.endpoint ? -1 : a.endpoint > b.endpoint ? 1 : 0;
 
+/**
+ * True when an endpoint URL points at this machine's loopback (127.0.0.0/8, ::1, localhost).
+ * Exported for tests.
+ * @param {unknown} endpoint
+ */
+export function isLoopbackEndpoint(endpoint) {
+  if (typeof endpoint !== "string" || !endpoint) return false;
+  let host;
+  try {
+    host = new URL(endpoint).hostname.toLowerCase();
+  } catch {
+    return false;
+  }
+  return host === "localhost" || host.endsWith(".localhost") || host === "[::1]" || host === "::1" || /^127\./.test(host);
+}
+
 function knownLoad(v) {
   return typeof v === "number" && Number.isFinite(v) && v >= 0 ? v : null;
 }
@@ -86,6 +102,12 @@ export function buildRouteTable(inventories, targets, opts = {}) {
       if (m.servedBy) continue; // a cluster's model shown on a member node
       const rt = runtimeFor(runtimes, m);
       if (!rt || rt.reachable === false) continue;
+      // A tunnel endpoint is a temporary 127.0.0.1 forward the manager closes after each
+      // collection: routing to it would hit a dead port, so only direct endpoints route.
+      // An endpoint of unknown origin on loopback may be a closed tunnel's old local port.
+      const via = /** @type {any} */ (rt).via;
+      if (via === "ssh-tunnel") continue;
+      if (via !== "direct" && isLoopbackEndpoint(rt.endpoint)) continue;
       // Same normalization as targets.js countServing, so case-only differences dedupe.
       const endpoint = normalizeEndpoint(rt.endpoint);
       if (!endpoint) continue;

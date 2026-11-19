@@ -135,7 +135,23 @@ const DEFAULTS = Object.freeze({
    * showcase or model launch owns the unit.
    */
   llmStreamSample: false,
+  /**
+   * Show the Models page and the /api/fleet/* API (Fleet Model Manager: inventory and
+   * start / stop / switch / reload across nodes and clusters). On by default; only an
+   * explicit false turns it off, and then every /api/fleet/* route except /status answers 404.
+   */
+  fleetModelsEnabled: true,
+  /**
+   * Optional smart routing (P1): recommend / proxy an OpenAI-compatible request to a target
+   * already serving the model. Off by default; it never starts, stops or switches models.
+   */
+  smartRoutingEnabled: false,
+  /** Smart routing policy: "least-loaded" (default), "first-available" or "round-robin". */
+  smartRoutingPolicy: "least-loaded",
 });
+
+/** Kept in step with ROUTING_POLICIES in server/fleet/routing.js (a settings test checks this). */
+export const SMART_ROUTING_POLICIES = Object.freeze(["least-loaded", "first-available", "round-robin"]);
 
 const POLL_INTERVAL_MIN_MS = 500;
 const POLL_INTERVAL_MAX_MS = 60_000;
@@ -298,6 +314,11 @@ function _clampSettings(settings) {
   s.alertsEnabled = Boolean(s.alertsEnabled);
   s.mqttEnabled = Boolean(s.mqttEnabled);
   s.apiKeysEnabled = Boolean(s.apiKeysEnabled);
+  s.fleetModelsEnabled = s.fleetModelsEnabled !== false;
+  s.smartRoutingEnabled = s.smartRoutingEnabled === true;
+  s.smartRoutingPolicy = SMART_ROUTING_POLICIES.includes(s.smartRoutingPolicy)
+    ? s.smartRoutingPolicy
+    : DEFAULTS.smartRoutingPolicy;
   s.mqttUrl = normalizeMqttUrl(s.mqttUrl);
   s.mqttUsername = typeof s.mqttUsername === "string" ? s.mqttUsername.trim().slice(0, 128) : "";
   // Trailing slashes are normal while typing; strip them instead of rejecting.
