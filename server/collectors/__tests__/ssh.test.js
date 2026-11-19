@@ -2,12 +2,15 @@ import { beforeEach, test } from "node:test";
 import { strict as assert } from "node:assert";
 import { execFileSync } from "node:child_process";
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { sshCommandSpec, sshExecOutcome, explainSshFailure } from "../ssh.js";
 import { decodeClixml } from "../windowsMetrics.js";
 
+const isWindows = process.platform === "win32";
+
 beforeEach((t) => {
-  for (const name of ["SSH_CONTROL_PERSIST_SECONDS", "SSH_CONTROL_PERSIST", "SSH_IDENTITY_FILE"]) {
+  for (const name of ["SSH_CONTROL_PERSIST_SECONDS", "SSH_CONTROL_PERSIST", "SSH_IDENTITY_FILE", "SSH_MULTIPLEX"]) {
     const previous = process.env[name];
     delete process.env[name];
     t.after(() => {
@@ -15,6 +18,9 @@ beforeEach((t) => {
       else process.env[name] = previous;
     });
   }
+  // Reuse is on by default except on a Windows host; opt in so these tests
+  // exercise it everywhere (ssh.multiplex.test.js covers the defaults).
+  process.env.SSH_MULTIPLEX = "1";
 });
 
 const controlOptions = (spec) => spec.args.filter((arg) => /^Control/.test(arg));
@@ -69,10 +75,15 @@ test("sshCommandSpec: commands use the private socket and persistence from their
   // Include OpenSSH's temporary socket suffix and the terminating NUL in
   // macOS's 104-byte limit. A long per-user TMPDIR must not affect this path.
   const cpValue = controlPath?.slice("ControlPath=".length);
-  assert.ok(cpValue && cpValue.startsWith("/tmp/sparkdash-"), `controlPath: ${controlPath}`);
+  const base = isWindows ? os.tmpdir().split(path.sep).join("/") : "/tmp";
+  assert.ok(cpValue && cpValue.startsWith(`${base}/sparkdash-`), `controlPath: ${controlPath}`);
   assert.ok(!cpValue.includes("%"));
-  assert.ok(Buffer.byteLength(cpValue) + 18 <= 104, `control path too long: ${cpValue.length}`);
-  assert.equal(fs.statSync(path.dirname(cpValue)).mode & 0o777, 0o700);
+  assert.ok(!cpValue.includes("\\"), "ssh reads a backslash in an -o value as an escape");
+  if (!isWindows) {
+    // Unix sockets only; Windows has no POSIX directory modes either.
+    assert.ok(Buffer.byteLength(cpValue) + 18 <= 104, `control path too long: ${cpValue.length}`);
+    assert.equal(fs.statSync(path.dirname(cpValue)).mode & 0o777, 0o700);
+  }
   assert.equal(persist, "ControlPersist=60");
   assert.deepEqual(controlOptions(spec), spec.multiplex.args.filter((arg) => /^Control/.test(arg)));
   const next = sshCommandSpec(keySpark, { remoteArgv: ["cat /proc/meminfo"] });

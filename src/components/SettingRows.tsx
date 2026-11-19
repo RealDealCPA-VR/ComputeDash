@@ -29,6 +29,7 @@ export function SettingRow({
 }
 
 export function ToggleRow({
+  id,
   title,
   help,
   checked,
@@ -37,6 +38,8 @@ export function ToggleRow({
   label,
   children,
 }: {
+  /** Anchor for links into Settings (see hooks/settingsLink). */
+  id?: string;
   title: string;
   help?: React.ReactNode;
   checked: boolean;
@@ -48,7 +51,7 @@ export function ToggleRow({
   children?: React.ReactNode;
 }) {
   return (
-    <SettingRow title={title} help={help}>
+    <SettingRow id={id} title={title} help={help}>
       {children}
       <button
         type="button"

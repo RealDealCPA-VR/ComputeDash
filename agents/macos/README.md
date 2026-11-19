@@ -160,6 +160,10 @@ error on the tile; the tile does not turn green because a command exited.
 `/metrics` is unchanged. A control request does not refresh or rewrite the
 metrics sample, and a slow start command does not hold `/metrics`.
 
+The dashboard's **Models** page (Fleet model manager) uses the same catalog: each
+catalog model is a `mac-profile` model there, started and stopped through these
+routes. See [docs/FLEET-MODELS.md](../../docs/FLEET-MODELS.md).
+
 ## Tests
 
 ```bash

@@ -54,6 +54,7 @@ Monitored units run **Linux**, **macOS**, or **Windows** (a Windows PC with an N
 - [Prometheus](#prometheus)
 - [Alert notifications](#alert-notifications)
 - [Power meters (wall power)](#power-meters-wall-power)
+- [Fleet model manager](#fleet-model-manager)
 - [RoCE / RDMA monitoring](#roce--rdma-monitoring)
 - [Intel Arc GPUs](#intel-arc-gpus)
 - [Windows PCs](#windows-pcs)
@@ -166,6 +167,7 @@ Full history: [CHANGELOG.md](./CHANGELOG.md)
 | **Kiosk** | `/kiosk`: a full-screen wall display with no menus — fleet totals, a large-type card per unit with a 30-minute trace, and the active alerts, on one screen (see [Kiosk](#kiosk-wall-display)) |
 | **LLM inference health** | KV cache free/pool (vLLM `cache_config_info` token and byte size; usage % when the pool size is absent), run/wait queue, TTFT/E2E/ITL p95, preemptions, prefix cache, MTP accept from Prometheus `/metrics` (vLLM and q27; q27 FIFO-queues so the Requests tile reads “N run” without a wait gauge) |
 | **Multiple LLM ports** | Monitor several LLM servers on different ports simultaneously — each gets its own panel with independent backend detection and metrics |
+| **Fleet model manager** | **Models** page: every node and cluster, the models each one can run with their real state (installed, configured, loaded, serving…), and manual **Start / Stop / Reload / Switch** with a step-by-step log, rollback and logs. Optional smart routing behind its own setting (see [Fleet model manager](#fleet-model-manager)) |
 | **GPU processes** | See the top GPU processes by VRAM usage directly in the GPU panel, including process name and memory allocation |
 | **Multi-GPU hosts** | A dedicated GPU host with several NVIDIA cards reports each one: the header names every card, the GPU panel adds a block per card (throttle chip, usage and temperature sparklines, power, VRAM bar) and the API exposes `gpu.gpus[]`. The headline `gpu` numbers stay an aggregate of all cards, so Overview cards and alerts need no change |
 | **Spark uptime** | System uptime displayed inline on each Spark header for at-a-glance availability |
@@ -721,6 +723,19 @@ Until step 3, sparkDash backs off after each rejection (see **Bad token, lockout
 
 **Audit log.** None: this page cannot change anything, so nothing is logged and nothing grows on disk.
 
+## Fleet model manager
+
+On by default (`fleetModelsEnabled`). The **Models** page (`/models`) lists every registered unit as a node and every cluster you define, and shows per target which models are installed, configured, loaded and serving. It reads the engines the LLM probe already found, the units' model launchers and, on agent-backed Macs, the runtime-control catalog. A failed source shows as `unknown` or `unreachable`; a state is never guessed.
+
+- **Manual control.** **Start**, **Stop**, **Reload** and **Switch** per model, one operation per target, each as logged steps: confirm the target answers and the model is available, check memory capacity and in-flight requests (both can be overridden with **Force**), stop the current model, start the new one, wait until it serves, roll back on failure, refresh. **Logs** shows launcher or Mac agent output.
+- **Engines.** Ollama load / unload over HTTP; LM Studio load / unload with `lms` over SSH; vLLM, llama.cpp and SGLang through a model launcher on the same port; Mac runtime profiles through the Mac agent. Other detected engines show read-only. A new engine is one adapter registration.
+- **Clusters.** A *distributed* cluster (members serving one model at one endpoint, started and stopped by a launcher on the head) is listed once and never counted again on its members. A *visual group* only groups nodes. Head/worker roles are offered as suggestions.
+- **Smart routing (optional).** Off by default (`smartRoutingEnabled`). When on, `/api/fleet/v1` is an OpenAI-compatible endpoint that forwards each request to a target already serving the model (`smartRoutingPolicy`: `least-loaded`, `first-available` or `round-robin`). It never starts, stops or switches models.
+
+**Model control needs an access token.** Inventories and logs can be read without one, but starting, stopping or switching models, cancelling operations, changing clusters and the routing proxy answer `403 token_required` until `SPARKDASH_TOKEN` is set (`SPARKDASH_FLEET_ALLOW_NO_TOKEN=1` lifts this on a single-user, loopback-only host). Keep the default loopback bind and publish it with [Tailscale Serve](#tailscale-serve-https). On a loopback bind the token protects changes and the WebSocket, not reads: anyone the front door admits can read inventories, logs and the route table, so limit who reaches it with your tailnet policy. The dashboard also runs natively on Windows 11 (Node 22 and the built-in `ssh.exe`). Operator guide, API reference, Windows hosting and troubleshooting: [docs/FLEET-MODELS.md](./docs/FLEET-MODELS.md).
+
+---
+
 ## RoCE / RDMA monitoring
 
 Spark units with RDMA devices (the CX7 ports) get a **RoCE / RDMA** panel on their page, with no switch integration and no root. Per port: link state and rate, MTU, netdev RX/TX traffic, RDMA payload throughput (the port's own `port_rcv_data` / `port_xmit_data` counters), interface errors and drops, PFC priorities, QoS trust mode (PCP or DSCP) and the DSCP map, global pause settings, and the RDMA counters (out of buffer, sequence errors, ACK timeouts, ECN-marked packets, CNPs sent and handled) plus ethtool discards, CRC errors and pause frames, with the change since the last sample.
@@ -992,6 +1007,7 @@ The dashboard does not have to run on a Spark. Every unit, including the machine
 - The shipped `Dockerfile` and `docker-compose.yml` target arm64 DGX Spark hosts (platform pin and `aarch64` NVIDIA library mounts). On x86 either edit those lines or run it bare: `npm install && npm run build && npm start` (Node 22).
 - Add each Spark with **Add Spark** using its LAN IP and an SSH user. The machine running the dashboard does not need a GPU; skip adding it as a unit.
 - An x86 Docker build is untested. Reports and PRs are welcome.
+- **Native Windows 11** also works, with Node 22 and the built-in `ssh.exe`: run `npm ci`, then `npm run build`, then `npm start` (as separate commands; Windows PowerShell 5.1 has no `&&`). Use SSH keys (there is no `sshpass`; SSH connection reuse is off by default on Windows), and add the Windows machine itself as a Windows PC unit rather than the local unit. Details and limits: [Hosting on Windows](./docs/FLEET-MODELS.md#hosting-on-windows-dell-precision).
 
 ## Architecture
 
@@ -1055,6 +1071,7 @@ sparkDash/
 │   ├── powermeter/      Opt-in wall-power meters: providers, polling, history reconciliation (recorded by energy/)
 │   ├── llmtokens/       Token ledger · events/ Activity log · metrics/ Unit history (GPU chart, Temps week, 48 h / 30 d tiers)
 │   ├── llmlaunch/       Model launchers · tooleval/ Tool Eval Bench
+│   ├── fleet/           Fleet model manager: targets, clusters, inventory, adapters, operations, routing
 │   ├── secretsStore.js  Encrypted password persistence
 │   └── validate.js      Host/user validation (SSRF-minded)
 ├── homeassistant/       Home Assistant custom integration
@@ -1099,6 +1116,7 @@ sparkDash/
 | GET/POST/DELETE | `/api/sparks/:id/llm/showcase[/:sessionId]` | Prompt Showcase sessions |
 | GET | `/api/events` | Fleet event log (`limit`, `sparkId`, `sinceId`, `beforeId`; 2000 kept) |
 | GET/POST/PUT/DELETE | `/api/sparks/:id/llm-launchers[/:lid]` | Registered start.sh / stop.sh model launchers; `POST …/:lid/start` and `…/stop` run them, `GET …/jobs/:jobId` streams the shell output |
+| GET/POST/PUT/DELETE | `/api/fleet/…` | Fleet model manager: `status`, `targets`, `targets/:targetId/inventory` · `operations` · `logs`, `operations/:opId`, `clusters[/:id]`; with smart routing on, `routing`, `routing/resolve` and the OpenAI-compatible `v1/*` proxy (see [docs/FLEET-MODELS.md](./docs/FLEET-MODELS.md#http-api)) |
 | GET/POST/DELETE | `/api/sparks/:id/tool-eval/…` | Tool Eval Bench on a Spark: `status`, `install`, `preview`, `probe`, `runs` (start / list / stream / attach / stop / refresh / `result` / delete); `GET /api/tool-eval/spec` serves the option spec |
 | POST | `/api/sparks/test` | Ephemeral SSH + LLM (+ Comfy if enabled) test (no persist) |
 | POST | `/api/sparks/:id/test` | Connectivity test (can save password) |
@@ -1175,6 +1193,9 @@ Gear icon in the header, or `GET`/`PUT` `/api/settings`:
 | Alert notifications (`alertsEnabled`) | false | Notify ntfy / Discord / Slack / a webhook about Health findings and Overview exceptions (see [Alert notifications](#alert-notifications)); while off nothing is evaluated or sent |
 | MQTT publishing | false | Publish the activity feed, per-unit availability and readings to an MQTT broker as they change (see [MQTT](#mqtt)); broker URL, username and topic prefix are set in the same dialog |
 | Home Assistant discovery | false | Publish retained MQTT discovery configs so Home Assistant creates the devices and sensors itself (see [Home Assistant](#home-assistant)) |
+| Models page (`fleetModelsEnabled`) | true | The Fleet model manager's **Models** page and `/api/fleet/*` (see [Fleet model manager](#fleet-model-manager)). While off nothing is collected for it, there is no navigation entry, and every `/api/fleet/*` route answers `404` except `GET /api/fleet/status` and `GET` / `DELETE /api/fleet/operations/:opId` (a running operation stays observable and cancellable) |
+| Smart routing (`smartRoutingEnabled`) | false | OpenAI-compatible proxy at `/api/fleet/v1` that forwards each request to a target already serving the requested model; it never starts, stops or switches models. Needs `SPARKDASH_TOKEN`; requests are limited to 120 per minute per client and 4 MB. While off, `GET /api/fleet/routing` answers `200` with `enabled: false`, and `POST /api/fleet/routing/resolve` and `/api/fleet/v1/*` answer `404` |
+| Routing policy (`smartRoutingPolicy`) | `least-loaded` | How smart routing picks among targets serving the same model: `least-loaded`, `first-available` or `round-robin` |
 | API Keys page (`apiKeysEnabled`) | false | Read-only page of LiteLLM virtual keys through a host-side bridge (see [API Keys](#api-keys)); while off there is no navigation entry and `/api/apikeys/*` answers `404` |
 | Session age (`occupancyMaxAgeMs`) | 12 hours | Hide harness sessions older than this. Settings offers 1 hour through 14 days. A missing or out-of-range value becomes 12 hours. There is no unlimited value |
 | GPU temperature alerts (`healthTempWarnC`, `healthTempCriticalC`) | 85, 90 | °C at which the Health finding for a hot GPU warns and turns critical; Alert notifications use the same limits. Each is a number from 40 to 110 and the warning must be lower than critical, otherwise the save is refused (`400` from `PUT /api/settings`). The values apply to every unit and to NVIDIA cards only, as before |
@@ -1215,6 +1236,7 @@ Copy `.env.example` to `.env` if needed:
 | `BIND_HOST` | `127.0.0.1` | HTTP and WebSocket listen address. A non-loopback bind without `SPARKDASH_TOKEN` is open to anyone who can reach it (see `SPARKDASH_ALLOW_OPEN_REMOTE`). |
 | `SPARKDASH_TOKEN` | _(empty)_ | Bearer token. When set, it is required for every mutation and WebSocket connection, and for REST reads on a non-loopback bind. The browser prompts for it when needed (Settings → Access token to change it). |
 | `SPARKDASH_ALLOW_OPEN_REMOTE` | `1` | Unset, empty, or `1`: a non-loopback bind without `SPARKDASH_TOKEN` stays open. `0`: refuse to start without a token (fail closed). |
+| `SPARKDASH_FLEET_ALLOW_NO_TOKEN` | _(unset)_ | `1`: allow [fleet model](#fleet-model-manager) control (operations, cancel, cluster changes, the routing proxy) without `SPARKDASH_TOKEN`. Only for a single-user host reachable on loopback alone; behind Tailscale Serve every tailnet device arrives through loopback. Unset: those routes answer `403 token_required` until a token is set. |
 | `SPARKDASH_ALLOWED_HOSTS` | _(empty)_ | Only for a reverse proxy on a custom domain: comma-separated names a loopback bind should also answer to. `localhost`, IP addresses, this machine's hostname and its Tailscale name work without it. |
 | `SPARKDASH_MQTT_PASSWORD` | _(empty)_ | Password for the MQTT broker configured in Settings → MQTT (the URL and username live in `settings.json`). Read once at startup. |
 | `SPARKDASH_HA_TOKEN` | _(empty)_ | Long-lived Home Assistant access token for [power meters](./docs/POWER-METERS.md) (the URL and outlets live in `config/power-meters.json`). Read once at startup. |
@@ -1249,6 +1271,7 @@ Copy `.env.example` to `.env` if needed:
 | `SSH_CONTROL_PERSIST_SECONDS` | `60` | Idle SSH transport persistence in seconds, capped at `3600`. Set to `0` to disable multiplexing. |
 | `MAX_ACTIVE_BENCH_JOBS` | `2` | Benchmarks (decode, prefill, quality) that may run at the same time across the whole fleet; each unit still runs one at a time. Clamped to 1–32. A start above the cap is refused with 429. Docker compose passes it through; set it in `.env`. |
 | `FLEET_ENERGY_JSON_PATH` | `config/fleet-energy.json` | Rolling fleet-energy persistence path |
+| `FLEET_CLUSTERS_JSON_PATH` | `config/fleet-clusters.json` | [Fleet model manager](#fleet-model-manager) cluster definitions |
 | `FLEET_ENERGY_MONTHLY_JSON_PATH` | `config/fleet-energy-monthly.json` | Permanent monthly energy archive |
 | `POWER_METERS_CONFIG_PATH` | `config/power-meters.json` | Opt-in [power meters](./docs/POWER-METERS.md): the feature runs only when this file exists |
 | `GPU_HISTORY_JSON_PATH` | `config/gpu-history.json` | 8 h GPU chart history |
@@ -1258,7 +1281,7 @@ Copy `.env.example` to `.env` if needed:
 | `MODEL_PRICES_FETCH` | `0` | **Cost compare**: when `1`, the server refreshes the hosted-model price catalog once a day from `raw.githubusercontent.com` (the community litellm list). Opt-in so an install never phones out unasked; while off, the Cost compare page serves the last catalog on disk and makes no requests. Docker compose passes it through; set it in `.env` |
 | `MODEL_PRICES_JSON_PATH` | `config/model-prices.json` | **Cost compare**: where the last good price catalog is persisted (the offline / opt-out fallback). Pre-seed it to use the page with `MODEL_PRICES_FETCH` off. Docker compose passes it through; set it in `.env` |
 
-For compatibility, `SSH_CONTROL_PERSIST` is accepted as a seconds-based fallback when `SSH_CONTROL_PERSIST_SECONDS` is unset. The existing `SSH_MULTIPLEX=0` switch also disables reuse. SSH tunnels always use an independent connection.
+For compatibility, `SSH_CONTROL_PERSIST` is accepted as a seconds-based fallback when `SSH_CONTROL_PERSIST_SECONDS` is unset. Connection reuse is on by default except on Windows, whose `ssh.exe` does not support it. `SSH_MULTIPLEX=0` turns it off everywhere and any other non-empty value turns it on. If the socket directory cannot be created, the server warns once and continues without reuse. SSH tunnels always use an independent connection.
 
 > The listener and both Compose files default to `127.0.0.1`. Existing Docker users who opened
 > `http://<host-ip>:5555` must migrate to an SSH tunnel, authenticated reverse proxy, Tailscale
