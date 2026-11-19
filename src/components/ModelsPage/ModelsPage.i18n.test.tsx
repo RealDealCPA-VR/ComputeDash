@@ -11,6 +11,11 @@ vi.mock("../../api/fleetClient", async (importOriginal) => {
   return {
     FleetApiError: actual.FleetApiError,
     isBusyError: actual.isBusyError,
+    isTokenRequiredError: actual.isTokenRequiredError,
+    isRoutingDisabledError: actual.isRoutingDisabledError,
+    getRouting: vi.fn(),
+    resolveRoute: vi.fn(),
+    listRoutedModels: vi.fn(),
     getFleetStatus: vi.fn(),
     getTargets: vi.fn(),
     getInventory: vi.fn(),

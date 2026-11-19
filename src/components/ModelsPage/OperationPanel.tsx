@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { cancelOperation, FleetApiError, readOperation } from "../../api/fleetClient";
+import { cancelOperation, FleetApiError, isTokenRequiredError, readOperation } from "../../api/fleetClient";
 import type { FleetLogLine, FleetOperation } from "../../api/fleetTypes";
 import { LiveTerminal } from "../ui/LiveTerminal";
 import { Tag } from "../ui/Tag";
@@ -33,6 +33,16 @@ interface OperationPanelProps {
   /** Called once when the server answers 404 for the operation: its outcome is unknown. */
   onLost: (operation: FleetOperation) => void;
   onDismiss: () => void;
+  /** A control request was refused with 403 token_required (the page then shows its token banner). */
+  onTokenRequired?: () => void;
+  /** Control is refused until the dashboard has an access token: Cancel stays disabled. */
+  controlLocked?: boolean;
+}
+
+/** Every model an operation stops: `fromModelKeys` when the server sends it, else `fromModelKey`. */
+export function operationFromKeys(op: FleetOperation): string[] {
+  const keys = op.fromModelKeys?.length ? op.fromModelKeys : op.fromModelKey ? [op.fromModelKey] : [];
+  return [...new Set(keys)];
 }
 
 function errorText(err: unknown): string {
@@ -46,7 +56,7 @@ type PollState = "polling" | "retrying" | "auth" | "done";
  * `running`, showing each step and the log lines. A network failure keeps the last known state and
  * retries; 401 pauses until Retry; 404 marks the operation lost.
  */
-export function OperationPanel({ tracked, modelLabel, onUpdate, onFinished, onLost, onDismiss }: OperationPanelProps) {
+export function OperationPanel({ tracked, modelLabel, onUpdate, onFinished, onLost, onDismiss, onTokenRequired, controlLocked = false }: OperationPanelProps) {
   const { t } = useTranslation("models");
   const initial = tracked.operation;
   const [op, setOp] = useState<FleetOperation>(initial);
@@ -56,8 +66,10 @@ export function OperationPanel({ tracked, modelLabel, onUpdate, onFinished, onLo
   const [pollError, setPollError] = useState<string | null>(null);
   const [resume, setResume] = useState(0);
   const [confirmCancel, setConfirmCancel] = useState(false);
-  const [cancelState, setCancelState] = useState<"idle" | "pending" | "refused" | "error">("idle");
+  const [cancelState, setCancelState] = useState<"idle" | "pending" | "refused" | "error" | "token">("idle");
   const [cancelError, setCancelError] = useState<string | null>(null);
+  /** The server's reason for a refused cancel (raw text). */
+  const [cancelReason, setCancelReason] = useState<string | null>(null);
   const callbacks = useRef({ onUpdate, onFinished, onLost });
   callbacks.current = { onUpdate, onFinished, onLost };
   const opId = initial.id;
@@ -132,16 +144,25 @@ export function OperationPanel({ tracked, modelLabel, onUpdate, onFinished, onLo
     setConfirmCancel(false);
     setCancelState("pending");
     setCancelError(null);
+    setCancelReason(null);
     try {
+      // A refused cancel changes nothing: polling simply carries on.
       const res = await cancelOperation(op.id);
       setCancelState(res.cancelled ? "idle" : "refused");
+      setCancelReason(!res.cancelled && typeof res.reason === "string" && res.reason ? res.reason : null);
     } catch (err) {
+      if (isTokenRequiredError(err)) {
+        setCancelState("token");
+        onTokenRequired?.();
+        return;
+      }
       setCancelState("error");
       setCancelError(errorText(err));
     }
   };
 
-  const fromLabel = op.fromModelKey ? modelLabel(op.fromModelKey) : null;
+  const fromKeys = operationFromKeys(op);
+  const fromLabel = fromKeys.length ? fromKeys.map(modelLabel).join(", ") : null;
 
   return (
     <section className="panel mm-op" aria-labelledby={`mm-op-${op.id}`} data-status={lost ? "lost" : op.status}>
@@ -169,7 +190,13 @@ export function OperationPanel({ tracked, modelLabel, onUpdate, onFinished, onLo
           ) : null}
           {running ? (
             confirmCancel ? null : (
-              <button type="button" className="btn btn--sm btn--danger" onClick={() => setConfirmCancel(true)} disabled={cancelState === "pending"}>
+              <button
+                type="button"
+                className="btn btn--sm btn--danger"
+                onClick={() => setConfirmCancel(true)}
+                disabled={cancelState === "pending" || controlLocked}
+                {...(controlLocked ? { title: t("token.disabledReason"), "aria-description": t("token.disabledReason") } : {})}
+              >
                 {cancelState === "pending" ? t("operation.cancelling") : t("operation.cancel")}
               </button>
             )
@@ -218,7 +245,16 @@ export function OperationPanel({ tracked, modelLabel, onUpdate, onFinished, onLo
           {t("operation.error", { error: op.error })}
         </p>
       ) : null}
-      {cancelState === "refused" ? <p className="mm-op__note">{t("operation.cancelRefused")}</p> : null}
+      {cancelState === "refused" ? (
+        <p className="mm-op__note" role="status">
+          {cancelReason ? t("operation.cancelRefusedReason", { reason: cancelReason }) : t("operation.cancelRefused")}
+        </p>
+      ) : null}
+      {cancelState === "token" ? (
+        <p className="mm-op__error" role="alert">
+          {t("token.banner")}
+        </p>
+      ) : null}
       {cancelState === "error" && cancelError ? (
         <p className="mm-op__error" role="alert">
           {t("operation.cancelFailed", { error: cancelError })}

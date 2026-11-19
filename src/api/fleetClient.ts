@@ -4,6 +4,7 @@
  */
 import { authHeaders, reportAuthRequired } from "./authToken";
 import type {
+  FleetCancelResult,
   FleetCluster,
   FleetClusterInput,
   FleetClustersResponse,
@@ -14,6 +15,9 @@ import type {
   FleetOperationRequest,
   FleetStatus,
   FleetTargetsResponse,
+  RouteResolution,
+  RoutedModelsList,
+  RoutingView,
 } from "./fleetTypes";
 
 /** A failed fleet API call. `message` is the server's text; `code` is its machine-readable reason, when given. */
@@ -31,6 +35,11 @@ export class FleetApiError extends Error {
 /** 409: another operation is already running on the target (or a member node). */
 export function isBusyError(err: unknown): boolean {
   return err instanceof FleetApiError && err.status === 409;
+}
+
+/** 403 with code "token_required": control is refused until the dashboard has an access token. */
+export function isTokenRequiredError(err: unknown): boolean {
+  return err instanceof FleetApiError && err.status === 403 && err.code === "token_required";
 }
 
 const enc = encodeURIComponent;
@@ -58,7 +67,7 @@ export function readOperation(opId: string, since?: number): Promise<FleetOperat
   return apiFetch(`/api/fleet/operations/${enc(opId)}${query}`);
 }
 
-export function cancelOperation(opId: string): Promise<{ cancelled: boolean }> {
+export function cancelOperation(opId: string): Promise<FleetCancelResult> {
   return apiFetch(`/api/fleet/operations/${enc(opId)}`, { method: "DELETE" });
 }
 
@@ -81,6 +90,27 @@ export function updateCluster(id: string, patch: Partial<FleetClusterInput>): Pr
 
 export function deleteCluster(id: string): Promise<{ removed: true }> {
   return apiFetch(`/api/fleet/clusters/${enc(id)}`, { method: "DELETE" });
+}
+
+// ─── Smart routing (P1): read-only views; routing never starts, stops or switches a model ───
+
+/** 404 with code "routing_disabled": smart routing is switched off in Settings. */
+export function isRoutingDisabledError(err: unknown): boolean {
+  return err instanceof FleetApiError && err.status === 404 && err.code === "routing_disabled";
+}
+
+export function getRouting(): Promise<RoutingView> {
+  return apiFetch("/api/fleet/routing");
+}
+
+/** Which target a request for `model` would go to right now (dry run). */
+export function resolveRoute(model: string): Promise<RouteResolution> {
+  return apiFetch("/api/fleet/routing/resolve", { method: "POST", body: JSON.stringify({ model }) });
+}
+
+/** The models the routing proxy can serve, in OpenAI list format. */
+export function listRoutedModels(): Promise<RoutedModelsList> {
+  return apiFetch("/api/fleet/v1/models");
 }
 
 async function apiFetch<T>(path: string, opts?: RequestInit): Promise<T> {

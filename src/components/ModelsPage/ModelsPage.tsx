@@ -4,6 +4,7 @@ import { getFleetStatus, getTargets } from "../../api/fleetClient";
 import type { FleetStatus, FleetTarget } from "../../api/fleetTypes";
 import { Tag } from "../ui/Tag";
 import { ClusterDialog } from "./ClusterDialog";
+import { RoutingPanel } from "./RoutingPanel";
 import { TargetList } from "./TargetList";
 import { TargetModels } from "./TargetModels";
 import type { TrackedOperation } from "./OperationPanel";
@@ -28,6 +29,10 @@ export function ModelsPage() {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [operations, setOperations] = useState<Record<string, TrackedOperation>>({});
   const [clustersOpen, setClustersOpen] = useState(false);
+  /** Bumped by every full load (Refresh), so the routing panel reloads with the page. */
+  const [refreshKey, setRefreshKey] = useState(0);
+  /** A control request came back 403 token_required (cleared by the next successful status read). */
+  const [tokenRefused, setTokenRefused] = useState(false);
   const seq = useRef(0);
 
   const loadTargets = useCallback(async () => {
@@ -47,6 +52,8 @@ export function ModelsPage() {
     setLoading(true);
     const [st] = await Promise.allSettled([getFleetStatus(), loadTargets()]);
     setStatus(st.status === "fulfilled" ? st.value : null);
+    if (st.status === "fulfilled") setTokenRefused(false);
+    setRefreshKey((k) => k + 1);
     setLoading(false);
   }, [loadTargets]);
 
@@ -80,6 +87,10 @@ export function ModelsPage() {
     });
   }, []);
 
+  const onTokenRequired = useCallback(() => setTokenRefused(true), []);
+  // Control (start / stop / reload / switch, cluster edits) needs a dashboard access token on this server.
+  const controlLocked = tokenRefused || (status?.controlRequiresToken === true && status.tokenConfigured !== true);
+
   const selected = targets?.find((x) => x.targetId === selectedId) ?? null;
   const routing = status == null ? t("routing.unknown") : status.smartRoutingEnabled ? t("routing.on") : t("routing.off");
 
@@ -110,11 +121,24 @@ export function ModelsPage() {
         </div>
       ) : null}
 
+      {controlLocked ? (
+        <div className="panel tk-note mm-token-banner" role="status" data-testid="token-banner">
+          {t("token.banner")}
+        </div>
+      ) : null}
+
       {error ? (
         <div className="panel tk-note tk-note--err" role="alert">
           {t("errors.targets", { error })}
         </div>
       ) : null}
+
+      {/* Optional smart routing: collapsed by default, read-only, never needed for manual control. */}
+      {status?.enabled !== false ? <RoutingPanel targets={targets ?? []} smartRoutingEnabled={status?.smartRoutingEnabled ?? null}
+          refreshKey={refreshKey}
+          controlRequiresToken={status?.controlRequiresToken === true}
+          tokenConfigured={status?.tokenConfigured === true}
+        /> : null}
 
       {targets ? (
         targets.length === 0 ? (
@@ -130,6 +154,8 @@ export function ModelsPage() {
                 operation={operations[selected.targetId] ?? null}
                 onOperation={(op) => setOperation(selected.targetId, op)}
                 onTargetsChanged={onTargetsChanged}
+                controlLocked={controlLocked}
+                onTokenRequired={onTokenRequired}
               />
             ) : null}
           </div>
@@ -143,6 +169,8 @@ export function ModelsPage() {
         nodes={(targets ?? []).filter((x) => x.kind === "node")}
         onClose={() => setClustersOpen(false)}
         onChanged={onTargetsChanged}
+        controlLocked={controlLocked}
+        onTokenRequired={onTokenRequired}
       />
     </div>
   );

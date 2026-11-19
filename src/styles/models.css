@@ -497,3 +497,158 @@
   display: flex;
   gap: 6px;
 }
+
+/* Smart routing panel (optional, P1). Collapsed by default; read-only. */
+.mm .mm-routing {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.mm .mm-routing__toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+.mm .mm-routing__toggle:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+.mm .mm-routing__caret {
+  display: inline-block;
+  font-size: 11px;
+  color: var(--color-muted);
+  transition: transform 0.15s;
+}
+.mm .mm-routing__caret.is-open {
+  transform: rotate(90deg);
+}
+.mm .mm-routing__body {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-width: 0;
+}
+.mm .mm-routing__off {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.mm .mm-routing__facts {
+  display: grid;
+  grid-template-columns: minmax(0, max-content) minmax(0, 1fr);
+  gap: 8px 18px;
+  margin: 0;
+}
+.mm .mm-routing__facts > div {
+  display: contents;
+}
+.mm .mm-routing__facts dt {
+  font-size: 12.5px;
+  color: var(--color-muted);
+}
+.mm .mm-routing__facts dd {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+  margin: 0;
+  font-size: 12.5px;
+  color: var(--color-text);
+}
+.mm .mm-routing__url {
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 12px;
+  overflow-wrap: anywhere;
+  user-select: all;
+}
+.mm .mm-routing__hint {
+  font-size: 11.5px;
+  color: var(--color-muted);
+}
+.mm .mm-routing__subhead {
+  margin: 4px 0 0;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--color-muted);
+}
+.mm .mm-routing__model {
+  font-weight: 600;
+  text-align: left;
+  vertical-align: top;
+  overflow-wrap: anywhere;
+}
+.mm .mm-routing__endpoint {
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+.mm .mm-routing__resolve {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+.mm .mm-routing__input {
+  flex: 1 1 220px;
+  min-width: 0;
+  min-height: 2.1rem;
+  padding: 0.35rem 0.7rem;
+  border: 1px solid var(--color-border-strong);
+  border-radius: 8px;
+  background: var(--color-surface-elevated);
+  color: var(--color-text);
+  font-size: 0.8125rem;
+  outline: none;
+  transition: border-color 0.15s, box-shadow 0.15s;
+}
+.mm .mm-routing__input:focus {
+  border-color: var(--color-accent);
+  box-shadow: 0 0 0 3px var(--color-accent-soft);
+}
+.mm .mm-routing__result {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font-size: 12.5px;
+}
+.mm .mm-routing__result p {
+  margin: 0;
+}
+@media (max-width: 560px) {
+  .mm .mm-routing__facts {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+/* Model control needs a dashboard access token (server: controlRequiresToken without a token). */
+.mm .mm-token-banner {
+  border-color: color-mix(in srgb, var(--color-warning) 45%, transparent);
+}
+.mm-dialog .mm-token-note {
+  margin: 0 0 10px;
+  padding: 8px 12px;
+  border: 1px solid color-mix(in srgb, var(--color-warning) 45%, transparent);
+  border-radius: 10px;
+  font-size: 12.5px;
+  color: var(--color-text);
+}
+.mm .mm-runtime__via {
+  font-size: 11.5px;
+  color: var(--color-muted);
+}
+.mm .mm-routing__warn {
+  padding: 6px 10px;
+  border: 1px solid color-mix(in srgb, var(--color-warning) 45%, transparent);
+  border-radius: 8px;
+  font-size: 11.5px;
+  color: var(--color-text);
+}

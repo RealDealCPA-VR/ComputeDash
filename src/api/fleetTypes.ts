@@ -69,6 +69,8 @@ export interface FleetRuntime {
   requestsRunning?: number | null;
   /** Optional (beyond §4): raw server hint, e.g. why load/unload is unavailable. Not translated. */
   note?: string | null;
+  /** How the dashboard reaches the runtime; "ssh-tunnel" runtimes are never routed. null = unknown. */
+  via?: "direct" | "ssh-tunnel" | null;
 }
 
 export interface FleetModel {
@@ -132,7 +134,10 @@ export interface FleetOperation {
   targetId: string;
   action: FleetOperationAction;
   modelKey: string;
+  /** The first of `fromModelKeys` (kept for older readers). */
   fromModelKey: string | null;
+  /** Every model the operation stops (a switch can replace several); [] = none. Older servers omit it. */
+  fromModelKeys?: string[];
   status: FleetOperationStatus;
   /** Current step id. */
   step: string;
@@ -159,9 +164,22 @@ export interface FleetCluster {
   notes: string;
 }
 
+/** How smart routing picks among targets already serving a model (server/fleet/routing.js ROUTING_POLICIES). */
+export type RoutingPolicy = "least-loaded" | "first-available" | "round-robin";
+
+export const ROUTING_POLICIES: readonly RoutingPolicy[] = ["least-loaded", "first-available", "round-robin"];
+
+/** One target serving a model. `load` is running requests; null = unknown. */
+export interface RouteTarget {
+  targetId: string;
+  endpoint: string;
+  load: number | null;
+  port?: number | null;
+}
+
 export interface RouteEntry {
   model: string;
-  targets: { targetId: string; endpoint: string; load: number | null }[];
+  targets: RouteTarget[];
 }
 
 // ─── Request / response envelopes ─────────────────────────
@@ -170,6 +188,16 @@ export interface FleetStatus {
   enabled: boolean;
   smartRoutingEnabled: boolean;
   adapters: AdapterInfo[];
+  /** Control routes (operations, clusters) refuse requests unless the dashboard has an access token. */
+  controlRequiresToken?: boolean;
+  /** The server has an access token (SPARKDASH_TOKEN) configured. */
+  tokenConfigured?: boolean;
+}
+
+/** DELETE /api/fleet/operations/:id. Cancel is honoured only while waiting for readiness; otherwise `reason` says why. */
+export interface FleetCancelResult {
+  cancelled: boolean;
+  reason?: string | null;
 }
 
 export interface FleetTargetsResponse {
@@ -208,3 +236,29 @@ export interface FleetClustersResponse {
 
 /** POST body: a cluster without its id (the server derives a slug when it is omitted). */
 export type FleetClusterInput = Omit<FleetCluster, "id"> & { id?: string };
+
+/** GET /api/fleet/routing. While routing is off: enabled false and an empty table. */
+export interface RoutingView {
+  enabled: boolean;
+  policy: RoutingPolicy;
+  table: RouteEntry[];
+}
+
+/** POST /api/fleet/routing/resolve: a dry run that never advances round-robin or starts anything. */
+export interface RouteResolution {
+  /** The chosen target (just its id when the target list no longer has it); null = no route. */
+  target: FleetTarget | { targetId: string } | null;
+  targetId: string | null;
+  endpoint: string | null;
+  /** The served model id that matched (case-insensitive matches are normalised); null = none. */
+  model: string | null;
+  policy: RoutingPolicy;
+  load: number | null;
+  reason: string;
+}
+
+/** GET /api/fleet/v1/models (OpenAI list format). */
+export interface RoutedModelsList {
+  object: "list";
+  data: { id: string; object: "model"; owned_by: string }[];
+}

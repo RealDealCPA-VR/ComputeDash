@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { getInventory, isBusyError, startOperation } from "../../api/fleetClient";
+import { getInventory, isBusyError, isTokenRequiredError, startOperation } from "../../api/fleetClient";
 import type { FleetInventory, FleetModel, FleetOperationRequest, FleetTarget } from "../../api/fleetTypes";
 import { Tag } from "../ui/Tag";
 import { LogsDialog } from "./LogsDialog";
@@ -20,6 +20,10 @@ interface TargetModelsProps {
   onOperation: (operation: TrackedOperation | null) => void;
   /** An operation started or finished: the target list (busy, serving counts) needs a refresh. */
   onTargetsChanged: () => void;
+  /** Model control is refused until the dashboard has an access token: lifecycle buttons stay disabled. */
+  controlLocked?: boolean;
+  /** A control request was refused with 403 token_required. */
+  onTokenRequired?: () => void;
 }
 
 function errorText(err: unknown): string {
@@ -27,7 +31,7 @@ function errorText(err: unknown): string {
 }
 
 /** One target's runtimes and models, with manual lifecycle controls. */
-export function TargetModels({ target, targets, operation, onOperation, onTargetsChanged }: TargetModelsProps) {
+export function TargetModels({ target, targets, operation, onOperation, onTargetsChanged, controlLocked = false, onTokenRequired }: TargetModelsProps) {
   const { t, i18n } = useTranslation("models");
   const [inventory, setInventory] = useState<FleetInventory | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -79,7 +83,9 @@ export function TargetModels({ target, targets, operation, onOperation, onTarget
   const nodeName = (unitId: string) => targets.find((x) => x.kind === "node" && x.id === unitId)?.name ?? unitId;
 
   const opRunning = isOperationRunning(operation);
-  const locked = opRunning || target.busy || actionBusy;
+  const locked = opRunning || target.busy || actionBusy || controlLocked;
+  /** Why control buttons are disabled when it is the missing token (title + accessible description). */
+  const tokenHint = controlLocked ? { title: t("token.disabledReason"), "aria-description": t("token.disabledReason") } : {};
   const switchCandidates = (inventory?.models ?? []).filter((m) => m.actions.switchTo);
 
   const run = async (body: FleetOperationRequest) => {
@@ -92,6 +98,11 @@ export function TargetModels({ target, targets, operation, onOperation, onTarget
       setSwitchOpen(false);
       onTargetsChanged();
     } catch (err) {
+      if (isTokenRequiredError(err)) {
+        setActionError(t("token.banner"));
+        onTokenRequired?.();
+        return;
+      }
       setActionError(isBusyError(err) ? t("errors.busy", { error: errorText(err) }) : t("errors.action", { error: errorText(err) }));
     } finally {
       setActionBusy(false);
@@ -178,13 +189,13 @@ export function TargetModels({ target, targets, operation, onOperation, onTarget
       <td className={`mm-num${m.estMemoryBytes == null ? " mm-unknown" : ""}`}>{formatMemory(m.estMemoryBytes, unknown)}</td>
       <td>
         <div className="mm-row-actions">
-          <button type="button" className="btn btn--sm" aria-label={t("actions.startModel", { model: m.label })} disabled={!m.actions.start || locked} onClick={() => setConfirm({ action: "start", model: m })}>
+          <button type="button" className="btn btn--sm" aria-label={t("actions.startModel", { model: m.label })} disabled={!m.actions.start || locked} {...tokenHint} onClick={() => setConfirm({ action: "start", model: m })}>
             {t("actions.start")}
           </button>
-          <button type="button" className="btn btn--sm" aria-label={t("actions.stopModel", { model: m.label })} disabled={!m.actions.stop || locked} onClick={() => setConfirm({ action: "stop", model: m })}>
+          <button type="button" className="btn btn--sm" aria-label={t("actions.stopModel", { model: m.label })} disabled={!m.actions.stop || locked} {...tokenHint} onClick={() => setConfirm({ action: "stop", model: m })}>
             {t("actions.stop")}
           </button>
-          <button type="button" className="btn btn--sm" aria-label={t("actions.reloadModel", { model: m.label })} disabled={!m.actions.reload || locked} onClick={() => setConfirm({ action: "reload", model: m })}>
+          <button type="button" className="btn btn--sm" aria-label={t("actions.reloadModel", { model: m.label })} disabled={!m.actions.reload || locked} {...tokenHint} onClick={() => setConfirm({ action: "reload", model: m })}>
             {t("actions.reload")}
           </button>
           <button type="button" className="btn btn--sm btn--ghost" aria-label={t("actions.logsModel", { model: m.label })} onClick={() => setLogsFor({ modelKey: m.modelKey, label: m.label })}>
@@ -234,6 +245,7 @@ export function TargetModels({ target, targets, operation, onOperation, onTarget
               type="button"
               className="btn btn--sm btn--primary"
               disabled={locked || !inventory || switchCandidates.length === 0}
+              {...tokenHint}
               onClick={() => {
                 setActionError(null);
                 setSwitchOpen(true);
@@ -291,6 +303,7 @@ export function TargetModels({ target, targets, operation, onOperation, onTarget
                     {runtimeReachLabel(r.reachable)}
                   </Tag>
                   {r.endpoint ? <span className="mm-runtime__endpoint">{r.endpoint}</span> : null}
+                  {r.via === "ssh-tunnel" ? <span className="mm-runtime__via">{t("runtimes.viaTunnel")}</span> : null}
                   {r.requestsRunning != null ? <span className="mm-runtime__requests">{t("runtimes.requests", { count: r.requestsRunning })}</span> : null}
                   {r.error ? <span className="mm-runtime__error">{r.error}</span> : null}
                   {r.note ? <span className="mm-runtime__note">{r.note}</span> : null}
@@ -312,6 +325,8 @@ export function TargetModels({ target, targets, operation, onOperation, onTarget
           onFinished={onFinished}
           onLost={onLost}
           onDismiss={() => onOperation(null)}
+          onTokenRequired={onTokenRequired}
+          controlLocked={controlLocked}
         />
       ) : null}
 

@@ -13,6 +13,43 @@
     "unknown": "unknown",
     "hint": "Smart routing is a separate setting. Every control on this page works with it off."
   },
+  "routingPanel": {
+    "title": "Smart routing",
+    "stateOn": "On",
+    "stateOff": "Off",
+    "never": "Routing only sends requests to models that are already serving. It never starts, stops or switches a model, and every manual control on this page works the same with it on or off.",
+    "off": "Smart routing is off. When it is on, OpenAI-compatible requests sent to the dashboard go to a node or cluster that is already serving the requested model.",
+    "openSettings": "Turn it on in Settings",
+    "policy": "Policy",
+    "policyLeastLoaded": "Least loaded",
+    "policyFirstAvailable": "First available",
+    "policyRoundRobin": "Round robin",
+    "baseUrl": "OpenAI-compatible base URL",
+    "baseUrlHelp": "Point an OpenAI-compatible client at this URL. The proxy requires the dashboard's access token (SPARKDASH_TOKEN on the server), sent as Authorization: Bearer <token>.",
+    "noTokenWarning": "No access token is set on the server, so clients calling this URL get 403 until SPARKDASH_TOKEN is set and the server is restarted. The route tester below still works because it only reads.",
+    "tableTitle": "Route table",
+    "tableEmpty": "No reachable node or cluster is serving a model right now.",
+    "colModel": "Model",
+    "colTarget": "Target",
+    "colEndpoint": "Endpoint",
+    "colLoad": "Running requests",
+    "resolveTitle": "Test a route",
+    "resolveLabel": "Model",
+    "resolvePlaceholder": "Model ID, e.g. Qwen/Qwen3-8B",
+    "resolveButton": "Resolve",
+    "resolving": "Resolving…",
+    "resolvedTo": "A request would go to {{target}} at {{endpoint}}.",
+    "resolvedDetail": "Served model: {{model}} · Running requests: {{load}} · Policy: {{policy}}",
+    "resolvedReason": "Reason: {{reason}}",
+    "noRoute": "No route: {{reason}}",
+    "errorLoad": "Could not load smart routing: {{error}}",
+    "errorResolve": "Could not resolve the model: {{error}}",
+    "tunnelNote": "Models reachable only through an SSH tunnel are not routed."
+  },
+  "token": {
+    "banner": "Model control is disabled until the dashboard has an access token. Set SPARKDASH_TOKEN on the server, then restart it. Inventory and logs stay available.",
+    "disabledReason": "Disabled: model control needs a dashboard access token (SPARKDASH_TOKEN on the server)."
+  },
   "errors": {
     "targets": "Could not load targets: {{error}}",
     "inventory": "Could not load the model inventory: {{error}}",
@@ -102,7 +139,8 @@
     "unreachable": "unreachable",
     "reachUnknown": "reach unknown",
     "requests_one": "{{count}} request running",
-    "requests_other": "{{count}} requests running"
+    "requests_other": "{{count}} requests running",
+    "viaTunnel": "via SSH tunnel"
   },
   "models": {
     "title_one": "{{count}} model",
@@ -193,7 +231,8 @@
     "cancelConfirmTitle": "Cancel operation",
     "cancelConfirmBody": "Cancel this operation? This stops waiting for readiness; an engine that has already started is not killed.",
     "keepRunning": "Keep running",
-    "confirmCancel": "Cancel operation"
+    "confirmCancel": "Cancel operation",
+    "cancelRefusedReason": "Cannot cancel now: {{reason}}"
   },
   "logs": {
     "titleTarget": "Logs: {{target}}",

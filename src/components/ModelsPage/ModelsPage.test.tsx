@@ -10,6 +10,11 @@ vi.mock("../../api/fleetClient", async (importOriginal) => {
   return {
     FleetApiError: actual.FleetApiError,
     isBusyError: actual.isBusyError,
+    isTokenRequiredError: actual.isTokenRequiredError,
+    isRoutingDisabledError: actual.isRoutingDisabledError,
+    getRouting: vi.fn(),
+    resolveRoute: vi.fn(),
+    listRoutedModels: vi.fn(),
     getFleetStatus: vi.fn(),
     getTargets: vi.fn(),
     getInventory: vi.fn(),
@@ -90,6 +95,27 @@ describe("ModelsPage", () => {
     vi.mocked(client.getFleetStatus).mockResolvedValueOnce({ enabled: true, smartRoutingEnabled: true, adapters: [] });
     const second = await renderPage();
     expect(second.container.querySelector(".mm-routing-chip")?.textContent).toBe("Smart routing: on");
+  });
+
+  it("keeps the routing panel in step with the chip after Refresh", async () => {
+    vi.mocked(client.getRouting).mockResolvedValueOnce({ enabled: false, policy: "least-loaded", table: [] });
+    const { container } = await renderPage();
+    const toggle = container.querySelector<HTMLButtonElement>(".mm-routing__toggle")!;
+    expect(client.getRouting).not.toHaveBeenCalled();
+    await click(toggle);
+    expect(client.getRouting).toHaveBeenCalledTimes(1);
+    expect(container.querySelector(".mm-routing")?.textContent).toContain("Smart routing is off.");
+
+    // Routing switched on in Settings; the page's Refresh reloads the open panel too.
+    vi.mocked(client.getFleetStatus).mockResolvedValueOnce({ enabled: true, smartRoutingEnabled: true, adapters: [] });
+    vi.mocked(client.getRouting).mockResolvedValueOnce({ enabled: true, policy: "round-robin", table: [] });
+    const refresh = Array.from(container.querySelectorAll<HTMLButtonElement>(".page-head__tools button")).find((b) => b.textContent === "Refresh")!;
+    await click(refresh);
+    await flush();
+    expect(container.querySelector(".mm-routing-chip")?.textContent).toBe("Smart routing: on");
+    expect(client.getRouting).toHaveBeenCalledTimes(2);
+    expect(container.querySelector(".mm-routing")?.textContent).not.toContain("Smart routing is off.");
+    expect(container.querySelector("[data-testid=routing-policy]")?.textContent).toBe("Round robin");
   });
 
   it("renders all ten states, runtimes, null-safe values and cluster models read-only", async () => {
@@ -217,6 +243,46 @@ describe("ModelsPage", () => {
     expect(alert.textContent).toContain("target busy: switch running");
   });
 
+  it("locks model control with a banner while the server needs a token it does not have", async () => {
+    vi.mocked(client.getFleetStatus).mockResolvedValue({ enabled: true, smartRoutingEnabled: false, adapters: [], controlRequiresToken: true, tokenConfigured: false });
+    const { container } = await renderPage();
+    expect(container.querySelector("[data-testid=token-banner]")?.textContent).toContain("Set SPARKDASH_TOKEN on the server, then restart it.");
+    const serving = row(container, SERVING.modelKey);
+    for (const label of ["Start", "Stop", "Reload"]) {
+      const b = button(label, serving);
+      expect(b.disabled).toBe(true);
+      expect(b.getAttribute("title")).toContain("needs a dashboard access token");
+      expect(b.getAttribute("aria-description")).toContain("needs a dashboard access token");
+    }
+    expect(button("Switch model").disabled).toBe(true);
+    expect(button("Switch model").getAttribute("title")).toContain("needs a dashboard access token");
+    // Logs stay available.
+    expect(button("View logs").disabled).toBe(false);
+    // Cluster edits are locked too.
+    await click(button("Clusters"));
+    expect(button("New cluster", dialog()!).disabled).toBe(true);
+    expect(dialog()!.textContent).toContain("Model control is disabled until the dashboard has an access token");
+  });
+
+  it("does not lock control when a token is configured or not required", async () => {
+    vi.mocked(client.getFleetStatus).mockResolvedValue({ enabled: true, smartRoutingEnabled: false, adapters: [], controlRequiresToken: true, tokenConfigured: true });
+    const { container } = await renderPage();
+    expect(container.querySelector("[data-testid=token-banner]")).toBeNull();
+    expect(button("Stop", row(container, SERVING.modelKey)).disabled).toBe(false);
+    expect(button("Stop", row(container, SERVING.modelKey)).hasAttribute("title")).toBe(false);
+  });
+
+  it("a 403 token_required answer shows the token message and locks control", async () => {
+    vi.mocked(client.startOperation).mockRejectedValue(new client.FleetApiError("Model control requires SPARKDASH_TOKEN", 403, "token_required"));
+    const { container } = await renderPage();
+    expect(container.querySelector("[data-testid=token-banner]")).toBeNull();
+    await click(button("Start", row(container, BIG.modelKey)));
+    await click(button("Start", dialog()!));
+    expect(dialog()!.querySelector("[role=alert]")?.textContent).toContain("Model control is disabled until the dashboard has an access token");
+    expect(container.querySelector("[data-testid=token-banner]")).not.toBeNull();
+    expect(button("Stop", row(container, SERVING.modelKey)).disabled).toBe(true);
+  });
+
   it("switch dialog: candidates, current model, capacity, force and rollback, then a confirmation step", async () => {
     vi.mocked(client.startOperation).mockResolvedValue({ operation: makeOperation({ action: "switch", modelKey: BIG.modelKey, fromModelKey: SERVING.modelKey }) });
     await renderPage();
@@ -310,7 +376,7 @@ describe("ModelsPage", () => {
   it("shows optional runtime requests/notes and a model's last seen state", async () => {
     const inv = makeInventory();
     inv.runtimes[0] = { ...inv.runtimes[0], requestsRunning: 2, note: "load/unload needs the lms CLI <raw>" };
-    inv.runtimes[1] = { ...inv.runtimes[1], requestsRunning: null };
+    inv.runtimes[1] = { ...inv.runtimes[1], requestsRunning: null, via: "ssh-tunnel" };
     inv.models = inv.models.map((m) =>
       m.modelId === "m-unreachable" ? { ...m, lastSeen: { state: "serving" as const, at: Date.now() - 5 * 60_000 } } : m.modelId === "m-stopped" ? { ...m, lastSeen: { state: "serving" as const, at: 0 } } : m
     );
@@ -320,6 +386,8 @@ describe("ModelsPage", () => {
     expect(runtimes[0].textContent).toContain("2 requests running");
     expect(runtimes[0].querySelector(".mm-runtime__note")?.textContent).toBe("load/unload needs the lms CLI <raw>");
     expect(runtimes[1].textContent).not.toContain("request");
+    expect(runtimes[1].querySelector(".mm-runtime__via")?.textContent).toBe("via SSH tunnel");
+    expect(runtimes[0].querySelector(".mm-runtime__via")).toBeNull();
     expect(row(container, "vllm|8000|m-unreachable").querySelector(".mm-last-seen")?.textContent).toBe("last seen serving 5 minutes ago");
     // Only shown while the current state is uncertain.
     expect(row(container, "vllm|8000|m-stopped").querySelector(".mm-last-seen")).toBeNull();

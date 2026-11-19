@@ -2,12 +2,12 @@ import { act } from "react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { flush, render } from "../../testing/render";
 import * as client from "../../api/fleetClient";
-import { isOperationRunning, OperationPanel, OPERATION_POLL_MS } from "./OperationPanel";
+import { isOperationRunning, OperationPanel, OPERATION_POLL_MS, operationFromKeys } from "./OperationPanel";
 import { makeOperation } from "./fixtures";
 
 vi.mock("../../api/fleetClient", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../../api/fleetClient")>();
-  return { FleetApiError: actual.FleetApiError, readOperation: vi.fn(), cancelOperation: vi.fn() };
+  return { FleetApiError: actual.FleetApiError, isTokenRequiredError: actual.isTokenRequiredError, readOperation: vi.fn(), cancelOperation: vi.fn() };
 });
 
 beforeEach(() => {
@@ -177,6 +177,81 @@ it("says so when the server refuses to cancel", async () => {
   await act(async () => btn(container, "Cancel operation").click());
   await flush();
   expect(container.textContent).toContain("could not be cancelled");
+});
+
+it("shows the server's reason when a cancel is refused, and keeps polling", async () => {
+  vi.mocked(client.readOperation).mockResolvedValue({ operation: makeOperation(), lines: [], nextSeq: 0 });
+  vi.mocked(client.cancelOperation).mockResolvedValue({ cancelled: false, reason: "the engine is already loading; cancel only works while waiting for readiness" });
+  const { container } = setup();
+  await flush();
+  await act(async () => btn(container, "Cancel").click());
+  await act(async () => btn(container, "Cancel operation").click());
+  await flush();
+  expect(container.textContent).toContain("Cannot cancel now: the engine is already loading; cancel only works while waiting for readiness");
+  expect(container.textContent).not.toContain("could not be cancelled at this step");
+  const calls = vi.mocked(client.readOperation).mock.calls.length;
+  await advance(OPERATION_POLL_MS * 2);
+  expect(vi.mocked(client.readOperation).mock.calls.length).toBe(calls + 2);
+  expect(labels(container)).toContain("Cancel");
+});
+
+it("a cancel refused with 403 token_required shows the token message and tells the page", async () => {
+  vi.mocked(client.readOperation).mockResolvedValue({ operation: makeOperation(), lines: [], nextSeq: 0 });
+  vi.mocked(client.cancelOperation).mockRejectedValue(new client.FleetApiError("token required", 403, "token_required"));
+  const onTokenRequired = vi.fn();
+  const view = render(
+    <OperationPanel
+      tracked={{ operation: makeOperation(), lost: false }}
+      modelLabel={(k) => k}
+      onUpdate={() => {}}
+      onFinished={() => {}}
+      onLost={() => {}}
+      onDismiss={() => {}}
+      onTokenRequired={onTokenRequired}
+    />
+  );
+  await flush();
+  await act(async () => btn(view.container, "Cancel").click());
+  await act(async () => btn(view.container, "Cancel operation").click());
+  await flush();
+  expect(view.container.querySelector("[role=alert]")?.textContent).toContain("Model control is disabled until the dashboard has an access token");
+  expect(onTokenRequired).toHaveBeenCalledTimes(1);
+});
+
+it("disables Cancel with the token reason while control is locked", async () => {
+  vi.mocked(client.readOperation).mockResolvedValue({ operation: makeOperation(), lines: [], nextSeq: 0 });
+  const view = render(
+    <OperationPanel
+      tracked={{ operation: makeOperation(), lost: false }}
+      modelLabel={(k) => k}
+      onUpdate={() => {}}
+      onFinished={() => {}}
+      onLost={() => {}}
+      onDismiss={() => {}}
+      controlLocked
+    />
+  );
+  await flush();
+  const cancel = btn(view.container, "Cancel");
+  expect(cancel.disabled).toBe(true);
+  expect(cancel.getAttribute("title")).toContain("needs a dashboard access token");
+  expect(cancel.getAttribute("aria-description")).toContain("needs a dashboard access token");
+  // Unlocked: no hint.
+  const { container } = setup();
+  await flush();
+  expect(btn(container, "Cancel").disabled).toBe(false);
+  expect(btn(container, "Cancel").hasAttribute("title")).toBe(false);
+});
+
+it("lists every model a switch stops (fromModelKeys), falling back to fromModelKey", async () => {
+  vi.mocked(client.readOperation).mockImplementation(() => new Promise(() => {}));
+  const op = makeOperation({ action: "switch", modelKey: "new", fromModelKey: "a", fromModelKeys: ["a", "b"] });
+  expect(operationFromKeys(op)).toEqual(["a", "b"]);
+  expect(operationFromKeys(makeOperation({ fromModelKey: "a" }))).toEqual(["a"]);
+  expect(operationFromKeys(makeOperation({ fromModelKey: null, fromModelKeys: [] }))).toEqual([]);
+  const { container } = setup(op);
+  await flush();
+  expect(container.querySelector(".mm-op__sub")?.textContent).toBe("Replacing label(a), label(b)");
 });
 
 it("stops polling when unmounted", async () => {

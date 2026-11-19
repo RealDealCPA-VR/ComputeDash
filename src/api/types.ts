@@ -1385,6 +1385,7 @@ export interface Settings {
   apiKeysEnabled?: boolean;
   fleetModelsEnabled?: boolean;
   smartRoutingEnabled?: boolean;
+  smartRoutingPolicy?: "least-loaded"|"first-available"|"round-robin";
   /**
    * Hide harness sessions older than this. Finite: 1 minute through 14 days.
    * Missing or out of range becomes 12 hours.

@@ -11,6 +11,7 @@ vi.mock("../../api/fleetClient", async (importOriginal) => {
   return {
     FleetApiError: actual.FleetApiError,
     isBusyError: actual.isBusyError,
+    isTokenRequiredError: actual.isTokenRequiredError,
     listClusters: vi.fn(),
     createCluster: vi.fn(),
     updateCluster: vi.fn(),

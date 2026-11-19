@@ -13,6 +13,43 @@
     "unknown": "未知",
     "hint": "智能路由是单独的设置。即使将其关闭，本页上的所有控制仍可使用。"
   },
+  "routingPanel": {
+    "title": "智能路由",
+    "stateOn": "开",
+    "stateOff": "关",
+    "never": "路由只会把请求发送到已在服务中的模型。它从不启动、停止或切换模型；无论开启与否，本页上的所有手动控制都照常工作。",
+    "off": "智能路由已关闭。开启后，发送到仪表盘的 OpenAI 兼容请求会转发到已在服务所请求模型的节点或集群。",
+    "openSettings": "在设置中开启",
+    "policy": "策略",
+    "policyLeastLoaded": "负载最低",
+    "policyFirstAvailable": "首个可用",
+    "policyRoundRobin": "轮询",
+    "baseUrl": "OpenAI 兼容的基础 URL",
+    "baseUrlHelp": "将 OpenAI 兼容客户端指向此 URL。代理需要仪表盘访问令牌（服务器上的 SPARKDASH_TOKEN），以 Authorization: Bearer <token> 发送。",
+    "noTokenWarning": "服务器尚未设置访问令牌，因此在设置 SPARKDASH_TOKEN 并重启服务器之前，调用此 URL 的客户端会收到 403。下方的路由测试仍可使用，因为它只读取数据。",
+    "tableTitle": "路由表",
+    "tableEmpty": "目前没有可访问的节点或集群正在服务模型。",
+    "colModel": "模型",
+    "colTarget": "目标",
+    "colEndpoint": "端点",
+    "colLoad": "运行中的请求",
+    "resolveTitle": "测试路由",
+    "resolveLabel": "模型",
+    "resolvePlaceholder": "模型 ID，例如 Qwen/Qwen3-8B",
+    "resolveButton": "解析",
+    "resolving": "正在解析…",
+    "resolvedTo": "请求将发送到 {{target}}（{{endpoint}}）。",
+    "resolvedDetail": "服务的模型：{{model}} · 运行中的请求：{{load}} · 策略：{{policy}}",
+    "resolvedReason": "原因：{{reason}}",
+    "noRoute": "无可用路由：{{reason}}",
+    "errorLoad": "无法加载智能路由：{{error}}",
+    "errorResolve": "无法解析该模型：{{error}}",
+    "tunnelNote": "只能通过 SSH 隧道访问的模型不会被路由。"
+  },
+  "token": {
+    "banner": "在仪表盘设置访问令牌之前，模型控制已禁用。请在服务器上设置 SPARKDASH_TOKEN，然后重启服务器。清单和日志仍可查看。",
+    "disabledReason": "已禁用：模型控制需要仪表盘访问令牌（服务器上的 SPARKDASH_TOKEN）。"
+  },
   "errors": {
     "targets": "无法加载目标：{{error}}",
     "inventory": "无法加载模型清单：{{error}}",
@@ -102,7 +139,8 @@
     "unreachable": "不可达",
     "reachUnknown": "可达性未知",
     "requests_one": "{{count}} 个请求进行中",
-    "requests_other": "{{count}} 个请求进行中"
+    "requests_other": "{{count}} 个请求进行中",
+    "viaTunnel": "经 SSH 隧道"
   },
   "models": {
     "title_one": "{{count}} 个模型",
@@ -193,7 +231,8 @@
     "cancelConfirmTitle": "取消操作",
     "cancelConfirmBody": "取消此操作？这将停止等待就绪；已启动的引擎不会被终止。",
     "keepRunning": "继续运行",
-    "confirmCancel": "取消操作"
+    "confirmCancel": "取消操作",
+    "cancelRefusedReason": "当前无法取消：{{reason}}"
   },
   "logs": {
     "titleTarget": "日志：{{target}}",

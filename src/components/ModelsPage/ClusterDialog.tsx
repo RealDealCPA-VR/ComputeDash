@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useId, useState, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
-import { createCluster, deleteCluster, isBusyError, listClusters, updateCluster } from "../../api/fleetClient";
+import { createCluster, deleteCluster, isBusyError, isTokenRequiredError, listClusters, updateCluster } from "../../api/fleetClient";
 import type { FleetCluster, FleetClusterInput, FleetClustersResponse, FleetTarget } from "../../api/fleetTypes";
 import { Tag } from "../ui/Tag";
 import { ModelsDialog } from "./ModelsDialog";
@@ -93,6 +93,10 @@ interface ClusterDialogProps {
   onClose: () => void;
   /** A cluster was created, changed or deleted: the target list needs a refresh. */
   onChanged: () => void;
+  /** Cluster changes are refused until the dashboard has an access token: edits stay disabled. */
+  controlLocked?: boolean;
+  /** A change was refused with 403 token_required. */
+  onTokenRequired?: () => void;
 }
 
 function errorText(err: unknown): string {
@@ -100,7 +104,7 @@ function errorText(err: unknown): string {
 }
 
 /** Create, edit and delete logical clusters, or adopt a suggested one. Nothing is created without a save. */
-export function ClusterDialog({ open, nodes, onClose, onChanged }: ClusterDialogProps) {
+export function ClusterDialog({ open, nodes, onClose, onChanged, controlLocked = false, onTokenRequired }: ClusterDialogProps) {
   const { t } = useTranslation("models");
   const formId = useId();
   const [data, setData] = useState<FleetClustersResponse | null>(null);
@@ -147,10 +151,12 @@ export function ClusterDialog({ open, nodes, onClose, onChanged }: ClusterDialog
     }
   };
 
+  const tokenHint = controlLocked ? { title: t("token.disabledReason"), "aria-description": t("token.disabledReason") } : {};
+
   const failureText = (err: unknown) =>
-    isBusyError(err) ? t("errors.busy", { error: errorText(err) }) : t("errors.cluster", { error: errorText(err) });
+    isTokenRequiredError(err) ? t("token.banner") : isBusyError(err) ? t("errors.busy", { error: errorText(err) }) : t("errors.cluster", { error: errorText(err) });
   const deleteFailureText = (err: unknown) =>
-    isBusyError(err) ? t("errors.busy", { error: errorText(err) }) : t("errors.clusterDelete", { error: errorText(err) });
+    isTokenRequiredError(err) ? t("token.banner") : isBusyError(err) ? t("errors.busy", { error: errorText(err) }) : t("errors.clusterDelete", { error: errorText(err) });
 
   const edit = (originalId: string | null, draft: ClusterDraft) => {
     setSaveError(null);
@@ -189,6 +195,7 @@ export function ClusterDialog({ open, nodes, onClose, onChanged }: ClusterDialog
       setView({ mode: "list" });
       await load();
     } catch (err) {
+      if (isTokenRequiredError(err)) onTokenRequired?.();
       setSaveError(failureText(err));
     } finally {
       setBusy(false);
@@ -205,6 +212,7 @@ export function ClusterDialog({ open, nodes, onClose, onChanged }: ClusterDialog
       setView({ mode: "list" });
       await load();
     } catch (err) {
+      if (isTokenRequiredError(err)) onTokenRequired?.();
       setSaveError(deleteFailureText(err));
     } finally {
       setBusy(false);
@@ -229,17 +237,19 @@ export function ClusterDialog({ open, nodes, onClose, onChanged }: ClusterDialog
       {cluster.kind === "distributed" ? <p className="mm-cluster__meta">{t("clusters.endpointLine", { endpoint: endpointText(cluster) })}</p> : null}
       <div className="mm-cluster__tools">
         {suggestion ? (
-          <button type="button" className="btn btn--sm btn--primary" onClick={() => edit(null, draftFromCluster(cluster))}>
+          <button type="button" className="btn btn--sm btn--primary" disabled={controlLocked} {...tokenHint} onClick={() => edit(null, draftFromCluster(cluster))}>
             {t("clusters.useSuggestion")}
           </button>
         ) : (
           <>
-            <button type="button" className="btn btn--sm" onClick={() => edit(cluster.id, draftFromCluster(cluster))}>
+            <button type="button" className="btn btn--sm" disabled={controlLocked} {...tokenHint} onClick={() => edit(cluster.id, draftFromCluster(cluster))}>
               {t("clusters.edit")}
             </button>
             <button
               type="button"
               className="btn btn--sm btn--danger"
+              disabled={controlLocked}
+              {...tokenHint}
               onClick={() => {
                 setSaveError(null);
                 setView({ mode: "delete", cluster });
@@ -373,7 +383,7 @@ export function ClusterDialog({ open, nodes, onClose, onChanged }: ClusterDialog
         <button type="button" className="btn btn--ghost" onClick={() => setView({ mode: "list" })} disabled={busy}>
           {t("dialog.back")}
         </button>
-        <button type="submit" form={formId} className="btn btn--primary" disabled={busy}>
+        <button type="submit" form={formId} className="btn btn--primary" disabled={busy || controlLocked} {...tokenHint}>
           {busy ? t("dialog.working") : t("clusters.save")}
         </button>
       </>
@@ -386,7 +396,7 @@ export function ClusterDialog({ open, nodes, onClose, onChanged }: ClusterDialog
         <button type="button" className="btn btn--ghost" onClick={() => setView({ mode: "list" })} disabled={busy}>
           {t("dialog.back")}
         </button>
-        <button type="button" className="btn btn--danger" onClick={() => void remove()} disabled={busy}>
+        <button type="button" className="btn btn--danger" onClick={() => void remove()} disabled={busy || controlLocked} {...tokenHint}>
           {busy ? t("dialog.working") : t("clusters.confirmDelete")}
         </button>
       </>
@@ -419,7 +429,7 @@ export function ClusterDialog({ open, nodes, onClose, onChanged }: ClusterDialog
         <button type="button" className="btn btn--ghost" onClick={onClose}>
           {t("dialog.close")}
         </button>
-        <button type="button" className="btn btn--primary" onClick={() => edit(null, { ...EMPTY_DRAFT })}>
+        <button type="button" className="btn btn--primary" disabled={controlLocked} {...tokenHint} onClick={() => edit(null, { ...EMPTY_DRAFT })}>
           {t("clusters.create")}
         </button>
       </>
@@ -428,6 +438,11 @@ export function ClusterDialog({ open, nodes, onClose, onChanged }: ClusterDialog
 
   return (
     <ModelsDialog open={open} busy={busy} onClose={onClose} title={title} tone={view.mode === "delete" ? "danger" : "neutral"} wide footer={footer}>
+      {controlLocked ? (
+        <p className="mm-token-note" role="status">
+          {t("token.banner")}
+        </p>
+      ) : null}
       {body}
       {saveError ? (
         <p className="modal-sheet__error" role="alert">

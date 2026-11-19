@@ -15,6 +15,7 @@ import { AlertsDialog } from "./AlertsDialog";
 import { BrowserAlertsSettings } from "./BrowserAlertsSettings";
 import { FleetGpuClock, type FleetGpuClockApi } from "./FleetGpuClock";
 import { LanguageSelector } from "./LanguageSelector";
+import { ROUTING_POLICIES, type RoutingPolicy } from "../api/fleetTypes";
 import "../styles/dialogs.css";
 
 interface SettingsDialogProps {
@@ -112,6 +113,11 @@ function applyTheme(theme: ThemeId) {
   window.dispatchEvent(new CustomEvent("sparkdash:set-theme", { detail: theme }));
 }
 
+/** The server's policy, or its default ("least-loaded") for a missing or unknown one. */
+function normalizeRoutingPolicy(value: unknown): RoutingPolicy {
+  return ROUTING_POLICIES.find((p) => p === value) ?? "least-loaded";
+}
+
 const POLL_PRESETS = [
   { value: 1000 },
   { value: 2000 },
@@ -148,6 +154,13 @@ export function SettingsDialog({ open, onClose, onSaved, onOpenHarness, section 
       case 5000: return t("refresh.fiveSeconds");
       case 10000: return t("refresh.tenSeconds");
       default: return "";
+    }
+  };
+  const routingPolicyLabel = (policy: RoutingPolicy) => {
+    switch (policy) {
+      case "first-available": return t("routingPolicy.firstAvailable");
+      case "round-robin": return t("routingPolicy.roundRobin");
+      default: return t("routingPolicy.leastLoaded");
     }
   };
   const [settings, setSettings] = useState<Settings | null>(null);
@@ -294,6 +307,10 @@ export function SettingsDialog({ open, onClose, onSaved, onOpenHarness, section 
   };
 
   if (!mounted) return null;
+
+  // Routing needs the Models page: shown off while that is off, but the stored choice is kept
+  // (only a click on the switch changes smartRoutingEnabled).
+  const routingShownOn = settings?.fleetModelsEnabled !== false && settings?.smartRoutingEnabled === true;
 
   const pickTheme = (next: ThemeId) => {
     setTheme(next);
@@ -597,6 +614,35 @@ export function SettingsDialog({ open, onClose, onSaved, onOpenHarness, section 
                 checked={Boolean(settings.apiKeysEnabled)}
                 onChange={(v) => update({ apiKeysEnabled: v })}
               />
+              <ToggleRow
+                title={t("toggles.fleetModels.title")}
+                help={t("toggles.fleetModels.help")}
+                checked={settings.fleetModelsEnabled !== false}
+                onChange={(v) => update({ fleetModelsEnabled: v })}
+              />
+              <ToggleRow
+                id="settings-section-routing"
+                title={t("toggles.smartRouting.title")}
+                help={t("toggles.smartRouting.help")}
+                checked={routingShownOn}
+                disabled={settings.fleetModelsEnabled === false}
+                onChange={(v) => update({ smartRoutingEnabled: v })}
+              />
+              {routingShownOn ? (
+                <SettingRow title={t("routingPolicy.title")} help={t("routingPolicy.help")} htmlFor="settings-smart-routing-policy">
+                  <select
+                    id="settings-smart-routing-policy"
+                    value={normalizeRoutingPolicy(settings.smartRoutingPolicy)}
+                    onChange={(e) => update({ smartRoutingPolicy: normalizeRoutingPolicy(e.target.value) })}
+                  >
+                    {ROUTING_POLICIES.map((policy) => (
+                      <option key={policy} value={policy}>
+                        {routingPolicyLabel(policy)}
+                      </option>
+                    ))}
+                  </select>
+                </SettingRow>
+              ) : null}
               <SettingRow
                 title={t("mqtt.url.title")}
                 help={t("mqtt.url.help")}

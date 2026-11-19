@@ -7,8 +7,13 @@ import {
   getInventory,
   getLogs,
   getTargets,
+  getRouting,
   isBusyError,
+  isRoutingDisabledError,
+  isTokenRequiredError,
+  listRoutedModels,
   readOperation,
+  resolveRoute,
   startOperation,
   updateCluster,
 } from "./fleetClient";
@@ -72,5 +77,48 @@ describe("fleetClient", () => {
     expect(isBusyError(err)).toBe(true);
     expect(isBusyError(new FleetApiError("x", 400))).toBe(false);
     expect(isBusyError(new Error("x"))).toBe(false);
+  });
+
+  it("reads the routing view and the routed model list with GET", async () => {
+    const view = { enabled: true, policy: "least-loaded", table: [{ model: "m", targets: [{ targetId: "node:a", endpoint: "http://a:8000", load: null }] }] };
+    fetchMock.mockResolvedValueOnce(new Response(JSON.stringify(view), { status: 200 }));
+    await expect(getRouting()).resolves.toEqual(view);
+    expect(lastCall()[0]).toBe("/api/fleet/routing");
+    expect(lastCall()[1]?.method).toBeUndefined();
+    const list = { object: "list", data: [{ id: "m", object: "model", owned_by: "sparkdash-fleet" }] };
+    fetchMock.mockResolvedValueOnce(new Response(JSON.stringify(list), { status: 200 }));
+    await expect(listRoutedModels()).resolves.toEqual(list);
+    expect(lastCall()[0]).toBe("/api/fleet/v1/models");
+  });
+
+  it("resolves a model with a JSON POST", async () => {
+    const res = { target: { targetId: "node:a" }, targetId: "node:a", endpoint: "http://a:8000", model: "M", policy: "round-robin", load: 2, reason: "exact match" };
+    fetchMock.mockResolvedValueOnce(new Response(JSON.stringify(res), { status: 200 }));
+    await expect(resolveRoute("M")).resolves.toEqual(res);
+    expect(lastCall()[0]).toBe("/api/fleet/routing/resolve");
+    expect(lastCall()[1]?.method).toBe("POST");
+    expect(JSON.parse(String(lastCall()[1]?.body))).toEqual({ model: "M" });
+    expect((lastCall()[1]?.headers as Record<string, string>)["Content-Type"]).toBe("application/json");
+  });
+
+  it("recognises routing_disabled 404s", async () => {
+    fetchMock.mockResolvedValueOnce(new Response(JSON.stringify({ error: "Smart routing is disabled", code: "routing_disabled" }), { status: 404 }));
+    const err = await resolveRoute("m").catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(FleetApiError);
+    expect(isRoutingDisabledError(err)).toBe(true);
+    expect(isRoutingDisabledError(new FleetApiError("x", 404, "fleet_disabled"))).toBe(false);
+    expect(isRoutingDisabledError(new FleetApiError("x", 400, "routing_disabled"))).toBe(false);
+    expect(isRoutingDisabledError(new Error("x"))).toBe(false);
+  });
+
+  it("recognises token_required 403s and returns a refused cancel's reason", async () => {
+    fetchMock.mockResolvedValueOnce(new Response(JSON.stringify({ error: "Model control needs an access token", code: "token_required" }), { status: 403 }));
+    const err = await startOperation("node:a", { action: "start", modelKey: "k" }).catch((e: unknown) => e);
+    expect(isTokenRequiredError(err)).toBe(true);
+    expect((err as FleetApiError).message).toBe("Model control needs an access token");
+    expect(isTokenRequiredError(new FleetApiError("x", 403, "forbidden"))).toBe(false);
+    expect(isTokenRequiredError(new FleetApiError("x", 401, "token_required"))).toBe(false);
+    fetchMock.mockResolvedValueOnce(new Response(JSON.stringify({ cancelled: false, reason: "past the readiness wait" }), { status: 200 }));
+    await expect(cancelOperation("op1")).resolves.toEqual({ cancelled: false, reason: "past the readiness wait" });
   });
 });
