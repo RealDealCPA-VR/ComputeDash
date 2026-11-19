@@ -107,6 +107,21 @@ export function registerFleetRoutes(app, {
 
   const read = (req, res, next) => {
     if (!allowRead(req)) return limited(res, "Too many fleet requests; try again shortly");
+    // Someone is looking: the manager keeps inventories fresh in the background for a while.
+    try {
+      manager.noteRead?.();
+    } catch {
+      /* bookkeeping only */
+    }
+    next();
+  };
+  /**
+   * Reads that do not keep inventories fresh: the operation records. The shell polls the active
+   * operations every few seconds on every page, which must not keep fleet-wide background
+   * collection (SSH and HTTP probes on every unit) running whenever any dashboard tab is open.
+   */
+  const readQuiet = (req, res, next) => {
+    if (!allowRead(req)) return limited(res, "Too many fleet requests; try again shortly");
     next();
   };
   /** Control routes: a dashboard token must be configured (unless explicitly opted out). */
@@ -189,7 +204,19 @@ export function registerFleetRoutes(app, {
     res.status(202).json({ operation: result.operation });
   }));
 
-  app.get("/api/fleet/operations/:opId", read, opParam, wrap(async (req, res) => {
+  // Running operations, plus (without ?active=1) those finished in the last 10 minutes; newest
+  // first, each in the same shape as GET /api/fleet/operations/:opId's `operation`.
+  app.get("/api/fleet/operations", readQuiet, wrap(async (req, res) => {
+    const extra = Object.keys(req.query ?? {}).filter((k) => k !== "active");
+    if (extra.length) return fail(res, 400, `Unknown query parameter: ${extra[0].slice(0, 40)}`, "validation");
+    const a = req.query.active;
+    if (a !== undefined && a !== "1" && a !== "0" && a !== "true" && a !== "false") {
+      return fail(res, 400, "active must be 1 or 0", "validation");
+    }
+    res.json(manager.listOperations({ activeOnly: a === "1" || a === "true" }));
+  }));
+
+  app.get("/api/fleet/operations/:opId", readQuiet, opParam, wrap(async (req, res) => {
     let since = 0;
     if (req.query.since !== undefined) {
       const raw = req.query.since;

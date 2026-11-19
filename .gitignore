@@ -70,5 +70,6 @@ __pycache__/
 !/docs/PRD-CROSS-PLATFORM-MODEL-MANAGEMENT.md
 !/docs/FLEET-MODEL-MANAGER-PLAN.md
 !/docs/FLEET-MODELS.md
+!/docs/MODIFICATIONS.md
 config/fleet-clusters.json
 config/fleet-clusters.json.*

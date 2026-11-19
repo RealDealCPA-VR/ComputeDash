@@ -42,8 +42,9 @@
       "workersHiddenDetail": "设置中已开启隐藏工作节点。关闭它以再次显示 Worker 角色的 Spark。",
       "allOfflineTitle": "所有 Spark 均离线",
       "allOfflineDetail": "已启用自动隐藏，当前没有 Spark 在线。",
-      "noSparksTitle": "尚未注册 Spark",
-      "noSparksDetail": "点击 + 标签页以添加一个 DGX Spark 设备。"
+      "noSparksTitle": "还没有机器",
+      "noSparksDetail": "添加一台 DGX Spark、GPU 工作站或 Mac，即可在这里开始监控。",
+      "addFirst": "添加第一台机器"
     },
     "filters": {
       "aria": "筛选集群设备",
@@ -58,7 +59,8 @@
     "sparkCount_one": "{{count}} 台 Spark",
     "sparkCount_other": "{{count}} 台 Spark",
     "hiddenWorkers_one": "已隐藏 {{count}} 个工作节点",
-    "hiddenWorkers_other": "已隐藏 {{count}} 个工作节点"
+    "hiddenWorkers_other": "已隐藏 {{count}} 个工作节点",
+    "loading": "正在加载集群"
   },
   "batch": {
     "hermesFailed": "批量 Hermes 更新失败",
@@ -206,7 +208,9 @@
     "gpuPowerShort": "功耗",
     "workerHeadCompletedDecode": " · {{value}} 已完成",
     "workerHeadCompletedPrefill": " · {{value}} 预填充，含缓存",
-    "completedDecodeRate": "{{value}} tok/s · 已完成"
+    "completedDecodeRate": "{{value}} tok/s · 已完成",
+    "models": "模型",
+    "modelsTitle": "{{name}} 的模型控制"
   },
   "launcher": {
     "modelsUnavailable": "模型不可用",
@@ -364,5 +368,83 @@
     "cancel": "取消",
     "failedRetry": "重启失败 — 重试",
     "sparkDash": "重启 sparkDash"
+  },
+  "fleetBoard": {
+    "title": "集群看板",
+    "caption": "每台机器当前在做什么、正在提供哪个模型",
+    "updated": "{{age}}前更新",
+    "openModels": "打开模型",
+    "loading": "正在加载集群看板",
+    "empty": "还没有机器或集群。",
+    "columns": {
+      "machine": "机器",
+      "hardware": "硬件",
+      "serving": "当前提供",
+      "live": "实时",
+      "actions": "操作"
+    },
+    "health": {
+      "ready": "就绪",
+      "degraded": "降级",
+      "unreachable": "不可达",
+      "unknown": "状态未知"
+    },
+    "cluster": "集群",
+    "group": "分组",
+    "head": "（主节点）",
+    "membersLabel": "成员",
+    "unknown": "未知",
+    "unifiedMemory": "{{size}} 统一内存",
+    "serving": {
+      "none": "未提供任何模型",
+      "count_one": "{{count}} 个模型正在提供",
+      "count_other": "{{count}} 个模型正在提供",
+      "more_one": "另有 {{count}} 个",
+      "more_other": "另有 {{count}} 个",
+      "unknown": "未知",
+      "unreachable": "不可达",
+      "reasonUnreachable": "机器没有响应，因此无法得知它在提供什么。",
+      "reasonGroup": "分组本身不运行模型；请查看其成员。",
+      "reasonNoInventory": "暂无最新的模型清单，将在一分钟内刷新。",
+      "reasonNotReported": "此服务器不报告正在提供的模型。"
+    },
+    "live": {
+      "none": "无实时数据",
+      "offline": "离线",
+      "headOffline": "主节点离线",
+      "tps": "tok/s",
+      "idle": "没有端点响应",
+      "unmeasuredTitle": "有端点响应，但无法读取其速率",
+      "headSuffix": "（主节点）",
+      "memoryTitle": "已用 {{used}} / {{total}}",
+      "unified": "内存",
+      "vram": "显存",
+      "gpuTemp": "GPU"
+    },
+    "busy": "操作进行中",
+    "operation": {
+      "switch": "正在切换到 {{model}}",
+      "start": "正在启动 {{model}}",
+      "stop": "正在停止 {{model}}",
+      "reload": "正在重新加载 {{model}}",
+      "unknownModel": "某个模型",
+      "step": "第 {{step}}/{{total}} 步"
+    },
+    "viewOperation": "查看",
+    "switch": "切换…",
+    "switchLabel": "切换 {{name}} 上的模型",
+    "loadingModels": "加载中…",
+    "logs": "日志",
+    "logsLabel": "{{name}} 的日志",
+    "manage": "管理",
+    "tokenHint": "需要访问令牌",
+    "tokenHintTitle": "模型控制需要仪表盘访问令牌。模型页面说明了如何设置。",
+    "errors": {
+      "targets": "无法加载集群看板：{{error}}",
+      "stale": "无法刷新集群看板（{{error}}），显示上次的结果。",
+      "inventory": "无法加载模型：{{error}}",
+      "switch": "无法开始切换：{{error}}",
+      "busy": "另一个操作正在进行：{{error}}"
+    }
   }
 }

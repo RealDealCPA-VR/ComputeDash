@@ -32,12 +32,26 @@ export function TargetList({ targets, selectedId, onSelect }: TargetListProps) {
     }
   };
 
-  const servingLabel = (target: FleetTarget) =>
-    target.servingCount == null ? t("targets.servingUnknown") : t("targets.serving", { count: target.servingCount });
+  /** Which models serve: the first name and "+N" (servingModels), else the count from older servers. */
+  const servingLabel = (target: FleetTarget) => {
+    if (target.servingModels !== undefined) {
+      const models = target.servingModels;
+      if (models == null) return t("targets.servingUnknown");
+      if (models.length === 0) return t("targets.servingNone");
+      if (models.length === 1) return t("targets.servingOne", { model: models[0] });
+      return t("targets.servingMore", { model: models[0], more: models.length - 1 });
+    }
+    return target.servingCount == null ? t("targets.servingUnknown") : t("targets.serving", { count: target.servingCount });
+  };
+  const servingUnknown = (target: FleetTarget) =>
+    target.servingModels !== undefined ? target.servingModels === null : target.servingCount == null;
+  const servingTitle = (target: FleetTarget) =>
+    target.servingModels && target.servingModels.length > 1 ? t("targets.servingList", { models: target.servingModels.join(", ") }) : undefined;
 
   const item = (target: FleetTarget) => {
     const selected = target.targetId === selectedId;
     const platform = platformLabel(target);
+    const running = target.busy || Boolean(target.activeOperationId);
     return (
       <li key={target.targetId}>
         <button
@@ -62,9 +76,12 @@ export function TargetList({ targets, selectedId, onSelect }: TargetListProps) {
             <span>{t("targets.memory", { memory: formatMemory(target.hardware.memoryTotalBytes, t("unknown")) })}</span>
           </span>
           <span className="mm-target__meta">
-            <span>{servingLabel(target)}</span>
-            {target.busy ? (
+            <span className={`mm-target__serving${servingUnknown(target) ? " mm-unknown" : ""}`} title={servingTitle(target)}>
+              {servingLabel(target)}
+            </span>
+            {running ? (
               <Tag tone="acc" className="mm-busy">
+                <span className="mm-busy__dot" aria-hidden="true" />
                 {t("targets.busy")}
               </Tag>
             ) : null}

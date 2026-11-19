@@ -5,38 +5,70 @@ import { baseUrlFor, errorMessage } from "./adapters/base.js";
 import { parseModelKey } from "./modelStates.js";
 import { OperationRunner } from "./operations.js";
 import { LAUNCHER_SLOT } from "./adapters/launchProfile.js";
+import { TunnelPool } from "./tunnelPool.js";
 
 /**
  * Façade over the fleet core for the HTTP routes (plan §3): targets, a short-lived inventory
  * cache, lifecycle operations, logs and clusters. Every network path goes through injected
- * dependencies; SSH tunnels opened to reach a loopback-only engine are closed after each
- * inventory collection, or at the end of the operation that opened them.
+ * dependencies. SSH tunnels to loopback-only engines come from a shared TunnelPool: collections
+ * and operations hold them while they run, and the pool closes a tunnel after a minute idle and
+ * on shutdown().
+ *
+ * Inventory cache consistency: every target has a generation. An invalidation (an operation
+ * starting / changing phase / ending, a cluster change) and an explicit refresh bump it; a
+ * collection's result is cached only if the generation it started under is still current. At
+ * most one collection per target runs at a time: a caller that needs data newer than the running
+ * collection waits for it to settle (bounded by its timeout) and then starts its own, and
+ * concurrent refreshes coalesce onto that next collection.
  *
  * @typedef {import("./inventory.js").FleetInventory} FleetInventory
  * @typedef {import("./clusterStore.js").FleetCluster} FleetCluster
  * @typedef {import("./clusterStore.js").ClusterStore} ClusterStore
  *
- * @typedef {(unit: object, port: number, opts?: { apiKey?: string|null }) =>
+ * @typedef {(unit: object, port: number, opts?: { apiKey?: string|null, skipDirect?: boolean }) =>
  *   Promise<{ host: string, port: number, via?: string, close?: () => void }>} ResolveTarget
  */
 
 export const INVENTORY_TTL_MS = 10_000;
 /** Background refresh period while smart routing is on (routing needs inventories < 60 s old). */
 export const BACKGROUND_REFRESH_MS = 30_000;
-const COLLECT_TIMEOUT_MS = 60_000;
+/** Background refresh period while nobody routes but someone reads the fleet API. */
+export const VIEW_REFRESH_MS = 60_000;
+/** The fleet API counts as being read for this long after its last read. */
+export const READ_ACTIVE_MS = 120_000;
+/**
+ * servingCount / servingModels use cached inventories younger than this (covers the 60 s view
+ * cadence with slack). Routing keeps its own, stricter rule (routing.js maxAgeMs on collectedAt).
+ */
+export const SERVING_FRESH_MS = 90_000;
+export const COLLECT_TIMEOUT_MS = 60_000;
+/** A collection still unsettled this many timeouts after it started is abandoned (a new one may start). */
+const COLLECT_ABANDON_FACTOR = 5;
+/** Finished operations listed by GET /api/fleet/operations for this long. */
+export const RECENT_OPERATIONS_MS = 10 * 60_000;
 const LAUNCHER_ID_RE = /^[a-z0-9][a-z0-9-]{0,47}$/;
 
-/** Connections (SSH tunnels) held for one collection or one operation; reused per unit:port. */
+/**
+ * Connections held for one collection or one operation; resolved once per unit:port and taken
+ * from the shared TunnelPool, so consecutive collections reuse one SSH tunnel per port.
+ * `close()` releases this scope's hold; the pool closes an idle tunnel later.
+ */
 class TunnelScope {
-  /** @param {ResolveTarget|null} resolveTarget */
-  constructor(resolveTarget) {
-    this.resolveTarget = resolveTarget;
+  /**
+   * @param {TunnelPool|null} pool
+   * @param {{ fresh?: boolean }} [opts]  fresh: ignore the pool's remembered mode and backoff
+   */
+  constructor(pool, { fresh = false } = {}) {
+    this.pool = pool;
+    this.fresh = fresh;
     /** @type {Map<string, Promise<string>>} */
     this.urls = new Map();
     /** @type {Array<() => void>} */
-    this.closers = [];
+    this.releases = [];
     /** @type {Map<string, "direct"|"ssh-tunnel">} base URL → how it was reached */
     this.via = new Map();
+    /** @type {Map<string, { unitId: string, port: number }>} base URL → pool key */
+    this.origin = new Map();
     this.closed = false;
   }
 
@@ -47,13 +79,12 @@ class TunnelScope {
     if (!p) {
       p = (async () => {
         const apiKey = unit?.llmApiKeys?.[port] ?? unit?.llmApiKeys?.[String(port)] ?? null;
-        const t = await this.resolveTarget(unit, port, { apiKey });
-        if (typeof t?.close === "function") {
-          if (this.closed) t.close();
-          else this.closers.push(t.close);
-        }
-        const url = baseUrlFor(t.host, t.port);
-        this.via.set(url, t.via === "ssh-tunnel" ? "ssh-tunnel" : "direct");
+        const h = await this.pool.acquire(unit, port, { apiKey, fresh: this.fresh });
+        if (this.closed) h.release();
+        else this.releases.push(h.release);
+        const url = baseUrlFor(h.host, h.port);
+        this.via.set(url, h.via === "ssh-tunnel" ? "ssh-tunnel" : "direct");
+        this.origin.set(url, { unitId: unit?.id, port });
         return url;
       })();
       // A failed resolve is not cached: the next caller tries again.
@@ -65,9 +96,9 @@ class TunnelScope {
 
   close() {
     this.closed = true;
-    for (const c of this.closers.splice(0)) {
+    for (const r of this.releases.splice(0)) {
       try {
-        c();
+        r();
       } catch {
         /* ignore */
       }
@@ -86,9 +117,24 @@ function tagVia(inv, scope) {
   if (!inv || !Array.isArray(inv.runtimes)) return inv;
   for (const rt of inv.runtimes) {
     if (!rt || typeof rt !== "object") continue;
-    rt.via = rt.endpoint ? scope.via.get(rt.endpoint) ?? null : null;
+    rt.via = rt.endpoint ? scope?.via.get(rt.endpoint) ?? null : null;
   }
   return inv;
+}
+
+function collectTimeoutError(targetId) {
+  const err = new Error(`inventory of ${targetId} timed out`);
+  err.code = "collect_timeout";
+  return err;
+}
+
+/** Reject after `ms` (the work itself keeps running; callers only stop waiting). */
+function withTimeout(promise, ms, message) {
+  let timer;
+  const timeout = new Promise((_, reject) => {
+    timer = setTimeout(() => reject(new Error(message)), ms);
+  });
+  return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
 }
 
 export class FleetModelManager {
@@ -112,8 +158,14 @@ export class FleetModelManager {
    * @param {number} [opts.cacheTtlMs]
    * @param {number} [opts.timeoutMs]
    * @param {object} [opts.runner]        OperationRunner options (readinessTimeoutMs, pollMs, …)
-   * @param {number} [opts.backgroundRefreshMs]  refresh cached inventories this often while
-   *   smartRoutingEnabled is true (0 disables; default 30 s)
+   * @param {number} [opts.backgroundRefreshMs]  background tick: refresh cached inventories this
+   *   often while smartRoutingEnabled is true (0 disables; default 30 s)
+   * @param {number} [opts.viewRefreshMs]   background cadence while routing is off but the fleet API
+   *   was read in the last `readActiveMs` (default 60 s)
+   * @param {number} [opts.readActiveMs]    default 120 s
+   * @param {number} [opts.servingFreshMs]  max cache age feeding servingCount / servingModels (90 s)
+   * @param {number} [opts.collectTimeoutMs]  callers stop waiting for a collection after this (60 s)
+   * @param {TunnelPool|object} [opts.tunnelPool]  a TunnelPool, or TunnelPool options (tests)
    */
   constructor({
     registry,
@@ -134,6 +186,11 @@ export class FleetModelManager {
     timeoutMs,
     runner = {},
     backgroundRefreshMs = BACKGROUND_REFRESH_MS,
+    viewRefreshMs = VIEW_REFRESH_MS,
+    readActiveMs = READ_ACTIVE_MS,
+    servingFreshMs = SERVING_FRESH_MS,
+    collectTimeoutMs = COLLECT_TIMEOUT_MS,
+    tunnelPool,
   }) {
     this.registry = registry;
     this.monitors = monitors;
@@ -148,13 +205,33 @@ export class FleetModelManager {
     this.fetchImpl = fetchImpl;
     this.exec = exec;
     this.mac = mac;
-    this.servedKeys = servedKeys;
+    /** Models seen serving this session (rule 7: stopped vs configured); one store per manager. */
+    this.servedKeys = servedKeys instanceof Set ? servedKeys : new Set();
     this.cacheTtlMs = cacheTtlMs;
     this.timeoutMs = timeoutMs;
     /** @type {Map<string, { inv: FleetInventory, at: number }>} */
     this.cache = new Map();
-    /** @type {Map<string, Promise<FleetInventory>>} */
+    /**
+     * At most one collection per target. The entry stays until the collection settles, even
+     * after callers stopped waiting (timeout), so a hung unit never accumulates collections.
+     * @type {Map<string, { promise: Promise<FleetInventory>, gen: number, force: boolean, startedAt: number, deadline: number, settled: boolean, abandoned: boolean }>}
+     */
     this.pending = new Map();
+    /** @type {Map<string, number>} targetId → cache generation */
+    this.generations = new Map();
+    this.collectTimeoutMs = collectTimeoutMs;
+    this.servingFreshMs = servingFreshMs;
+    this.viewRefreshMs = viewRefreshMs;
+    this.readActiveMs = readActiveMs;
+    this.lastReadAt = null;
+    this.lastPassAt = null;
+    this.backgroundTickMs = backgroundRefreshMs;
+    /** @type {TunnelPool|null} */
+    this.tunnelPool = null;
+    if (this.resolveTarget) {
+      this.tunnelPool =
+        tunnelPool instanceof TunnelPool ? tunnelPool : new TunnelPool({ resolveTarget: this.resolveTarget, now, ...(tunnelPool ?? {}) });
+    }
     this.backoff = new TargetBackoff({ now });
     this.runner = new OperationRunner({
       now,
@@ -162,13 +239,14 @@ export class FleetModelManager {
       ...runner,
       host: {
         getTarget: (id) => this._runnerTarget(id),
-        openScope: () => new TunnelScope(this.resolveTarget),
+        // Operations always check reachability afresh (no remembered mode, no port backoff).
+        openScope: () => new TunnelScope(this.tunnelPool, { fresh: true }),
         collect: (id, scope) => this._collect(id, { scope, raw: true, force: true }),
         refresh: (id) => this.inventory(id, { refresh: true }),
         contextFor: (id, model, scope) => this._contextFor(id, model, scope),
         launchers: this._launchersApi(),
         onChange: (lockIds) => {
-          for (const l of lockIds) this.cache.delete(l);
+          for (const l of lockIds) this.invalidate(l);
         },
       },
     });
@@ -181,14 +259,25 @@ export class FleetModelManager {
   }
 
   /**
-   * One background pass: only while smart routing is on (and the feature enabled). Uses the
-   * normal cached path, so the per-target backoff for unreachable targets still applies.
+   * One background pass, using the normal cached path (so the per-target and per-port backoff
+   * for unreachable targets still applies). Runs on every tick while smart routing is on (routing
+   * needs inventories < 60 s old); otherwise every `viewRefreshMs` while the fleet API was read in
+   * the last `readActiveMs`, so the target list's serving counts stay known while someone looks.
    * @returns {Promise<boolean>} whether a pass ran
    */
   async backgroundRefresh() {
     const s = this._settings();
-    if (s.smartRoutingEnabled !== true || s.fleetModelsEnabled === false || this.backgroundRunning) return false;
+    if (s.fleetModelsEnabled === false || this.backgroundRunning) return false;
+    const now = this.now();
+    if (s.smartRoutingEnabled !== true) {
+      const viewing = this.lastReadAt != null && now - this.lastReadAt < this.readActiveMs;
+      if (!viewing) return false;
+      // Half a tick of slack, so timer jitter does not push a 60 s cadence to 90 s.
+      const slack = Math.max(0, Math.floor((this.backgroundTickMs || 0) / 2));
+      if (this.lastPassAt != null && now - this.lastPassAt < this.viewRefreshMs - slack) return false;
+    }
     this.backgroundRunning = true;
+    this.lastPassAt = now;
     try {
       for (const t of this._targetList()) {
         if (t.kind === "cluster" && t.clusterKind !== "distributed") continue;
@@ -202,6 +291,25 @@ export class FleetModelManager {
       this.backgroundRunning = false;
     }
     return true;
+  }
+
+  /** The fleet API was read (routes call this; cheap). Keeps background refresh going a while. */
+  noteRead() {
+    this.lastReadAt = this.now();
+  }
+
+  /** Drop a target's cached inventory and make any collection in flight uncacheable. */
+  invalidate(targetId) {
+    this.cache.delete(targetId);
+    this._bump(targetId);
+  }
+
+  _gen(targetId) {
+    return this.generations.get(targetId) ?? 0;
+  }
+
+  _bump(targetId) {
+    this.generations.set(targetId, this._gen(targetId) + 1);
   }
 
   /** Every cached inventory (cheap; for smart routing). @returns {FleetInventory[]} */
@@ -353,32 +461,37 @@ export class FleetModelManager {
   }
 
   /**
-   * One collection. `raw` collections (operations) are never cached.
+   * One collection. `raw` collections (operations) are never cached. `timeoutMs` > 0 rejects
+   * after that long (operations); the cached path (inventory) bounds its waiting itself.
    * @returns {Promise<FleetInventory>}
    */
-  async _collect(targetId, { scope = null, raw = false, force = false } = {}) {
+  async _collect(targetId, { scope = null, raw = false, force = false, timeoutMs = this.collectTimeoutMs } = {}) {
     const r = this._resolve(targetId);
     if (!r) throw new Error(`target ${targetId} does not exist`);
     const own = scope == null;
-    const s = scope ?? new TunnelScope(this.resolveTarget);
+    const s = scope ?? (this.tunnelPool ? new TunnelScope(this.tunnelPool, { fresh: force }) : null);
     try {
       const previous = this.cache.get(targetId)?.inv ?? null;
-      let timer;
-      const timeout = new Promise((_, reject) => {
-        timer = setTimeout(() => reject(new Error(`inventory of ${targetId} timed out`)), COLLECT_TIMEOUT_MS);
-        timer.unref?.();
-      });
-      try {
-        const inv = await Promise.race([
-          collectInventory({ targetId, kind: r.kind, id: r.id }, this._deps({ scope: s, raw, force, previous })),
-          timeout,
-        ]);
-        return tagVia(inv, s);
-      } finally {
-        clearTimeout(timer);
-      }
+      const work = collectInventory({ targetId, kind: r.kind, id: r.id }, this._deps({ scope: s, raw, force, previous }));
+      const inv = timeoutMs > 0 ? await withTimeout(work, timeoutMs, `inventory of ${targetId} timed out`) : await work;
+      if (own && s) this._forgetFailedDirect(inv, s);
+      return tagVia(inv, s);
     } finally {
-      if (own) s.close();
+      if (own) s?.close();
+    }
+  }
+
+  /**
+   * A port remembered as directly reachable that did not answer: forget that, so the next
+   * collection probes again (and may fall back to a tunnel). Tunnels are not retired here: an
+   * engine that is down behind a live tunnel would otherwise cost a new SSH process per pass.
+   */
+  _forgetFailedDirect(inv, scope) {
+    if (!this.tunnelPool || !Array.isArray(inv?.runtimes)) return;
+    for (const rt of inv.runtimes) {
+      if (rt?.reachable !== false || !rt.endpoint || scope.via.get(rt.endpoint) !== "direct") continue;
+      const o = scope.origin.get(rt.endpoint);
+      if (o) this.tunnelPool.invalidate(o.unitId, o.port);
     }
   }
 
@@ -412,16 +525,18 @@ export class FleetModelManager {
   }
 
   _targetList() {
-    // Only recent inventories feed servingCount; an older one is treated as absent (count null).
+    // Only recent inventories feed servingCount / servingModels; an older one counts as absent
+    // (null). The window matches the background cadence (60 s while the API is read).
     const now = this.now();
     const inventories = new Map(
-      [...this.cache].filter(([, e]) => now - e.at < 2 * this.cacheTtlMs).map(([id, e]) => [id, e.inv])
+      [...this.cache].filter(([, e]) => now - e.at < this.servingFreshMs).map(([id, e]) => [id, e.inv])
     );
     return buildTargets({
       units: this._units(),
       clusters: this._clusters(),
       snapshots: this._snapshots(),
       busyTargetIds: this.runner.busyTargetIds(),
+      activeOperations: this.runner.activeLocks(),
       inventories,
     });
   }
@@ -432,24 +547,22 @@ export class FleetModelManager {
   }
 
   /**
-   * Cached inventory (TTL), or a fresh one with `refresh`. A refresh that fails outright serves
-   * the cached inventory with `stale: true`. Concurrent callers share one collection.
+   * Cached inventory (TTL), or a fresh one with `refresh`. A refresh (or a collection) that fails
+   * outright serves the cached inventory with `stale: true`. Concurrent callers share one
+   * collection; a refresh never joins a collection that started before it (see the class doc).
    * @returns {Promise<FleetInventory|null>} null for an unknown target
    */
   async inventory(targetId, { refresh = false } = {}) {
     if (!this._resolve(targetId)) return null;
-    const hit = this.cache.get(targetId);
-    if (!refresh && hit && this.now() - hit.at < this.cacheTtlMs) return { ...hit.inv, stale: false };
-    let p = this.pending.get(targetId);
-    if (!p) {
-      p = this._collect(targetId, { force: refresh }).finally(() => {
-        if (this.pending.get(targetId) === p) this.pending.delete(targetId);
-      });
-      this.pending.set(targetId, p);
+    if (!refresh) {
+      const hit = this.cache.get(targetId);
+      if (hit && this.now() - hit.at < this.cacheTtlMs) return { ...hit.inv, stale: false };
+    } else {
+      // Whatever is in flight now started before this request: its result must not be cached.
+      this._bump(targetId);
     }
     try {
-      const inv = await p;
-      this.cache.set(targetId, { inv, at: this.now() });
+      const inv = await this._awaitCollection(targetId, refresh);
       return { ...inv, stale: false };
     } catch (err) {
       const cached = this.cache.get(targetId);
@@ -470,6 +583,70 @@ export class FleetModelManager {
   }
 
   /**
+   * Join the target's current-generation collection, or start one. A collection of an older
+   * generation (or a non-forced one when `force` is needed) is waited for, never stacked on:
+   * once it settles a new one starts; if it is still running at its deadline, this caller gets
+   * the timeout and nothing new starts.
+   */
+  async _awaitCollection(targetId, force) {
+    for (let attempt = 0; ; attempt += 1) {
+      const gen = this._gen(targetId);
+      let e = this.pending.get(targetId);
+      if (e && (e.settled || this.now() - e.startedAt > COLLECT_ABANDON_FACTOR * this.collectTimeoutMs)) {
+        // Settled (cleanup pending) or hung far past its deadline: no longer blocks a new collection.
+        if (!e.settled) {
+          console.warn(`[fleet] inventory of ${targetId} never settled; starting a new collection`);
+          // Its eventual result is older than the replacement's: it must never overwrite the cache.
+          e.abandoned = true;
+        }
+        this.pending.delete(targetId);
+        e = undefined;
+      }
+      if (!e) e = this._startCollection(targetId, gen, force);
+      if ((e.gen === gen && (e.force || !force)) || attempt >= 3) return this._waitFor(targetId, e);
+      try {
+        await this._waitFor(targetId, e);
+      } catch (err) {
+        if (err?.code === "collect_timeout") throw err;
+        /* it failed: ours may do better */
+      }
+    }
+  }
+
+  _startCollection(targetId, gen, force) {
+    const startedAt = this.now();
+    const entry = { gen, force, startedAt, deadline: startedAt + this.collectTimeoutMs, settled: false, abandoned: false, promise: null };
+    entry.promise = Promise.resolve().then(() => this._collect(targetId, { force, timeoutMs: 0 }));
+    const done = () => {
+      entry.settled = true;
+      if (this.pending.get(targetId) === entry) this.pending.delete(targetId);
+    };
+    entry.promise.then(
+      (inv) => {
+        done();
+        // Cached only if nothing invalidated the target (or refreshed it) since this started.
+        if (!entry.abandoned && this._gen(targetId) === gen && this._resolve(targetId)) this.cache.set(targetId, { inv, at: this.now() });
+      },
+      done
+    );
+    this.pending.set(targetId, entry);
+    return entry;
+  }
+
+  /** Wait for a collection until its deadline. */
+  _waitFor(targetId, entry) {
+    const remaining = entry.deadline - this.now();
+    if (entry.settled || remaining > 0) {
+      let timer;
+      const timeout = new Promise((_, reject) => {
+        timer = setTimeout(() => reject(collectTimeoutError(targetId)), Math.max(0, remaining));
+      });
+      return Promise.race([entry.promise, timeout]).finally(() => clearTimeout(timer));
+    }
+    return Promise.reject(collectTimeoutError(targetId));
+  }
+
+  /**
    * @param {string} targetId
    * @param {{ action: string, modelKey: string, force?: boolean, rollback?: boolean }} body  validated by the route
    * @returns {{ ok: true, operation: object } | { ok: false, status: number, code: string, error: string }}
@@ -485,6 +662,15 @@ export class FleetModelManager {
     if (res.ok) return res;
     const status = res.code === "busy" ? 409 : res.code === "unknown_target" ? 404 : res.code === "shutting_down" ? 503 : 400;
     return { ok: false, status, code: res.code, error: res.error };
+  }
+
+  /**
+   * Operations for GET /api/fleet/operations, newest first: running ones, plus (unless
+   * `activeOnly`) those finished in the last RECENT_OPERATIONS_MS.
+   * @returns {{ operations: object[] }}
+   */
+  listOperations({ activeOnly = false } = {}) {
+    return { operations: this.runner.list({ activeOnly, recentMs: RECENT_OPERATIONS_MS }) };
   }
 
   readOperation(id, since = 0) {
@@ -579,7 +765,7 @@ export class FleetModelManager {
   updateCluster(id, patch) {
     const res = this.clusterStore.update(id, patch);
     if (res.ok) {
-      this.cache.delete(clusterTargetId(id));
+      this.invalidate(clusterTargetId(id));
       this._event({ type: "fleet.cluster.updated", severity: "info", sparkId: res.cluster.headId, sparkName: res.cluster.name, message: `Cluster ${res.cluster.name} was changed` });
     }
     return res;
@@ -589,7 +775,7 @@ export class FleetModelManager {
     const existing = this.clusterStore.get(id);
     const removed = this.clusterStore.remove(id);
     if (removed) {
-      this.cache.delete(clusterTargetId(id));
+      this.invalidate(clusterTargetId(id));
       this._event({ type: "fleet.cluster.removed", severity: "info", sparkId: existing?.headId ?? null, sparkName: existing?.name ?? id, message: `Cluster ${existing?.name ?? id} was removed` });
     }
     return removed;
@@ -597,14 +783,17 @@ export class FleetModelManager {
 
   /** Registry listener: a removed unit leaves its clusters and its caches. */
   onRegistryChange(action, spark) {
-    if (action !== "remove" || !spark?.id) return;
+    if (!spark?.id) return;
+    // A changed or removed unit may have a new address: forget how its ports were reached.
+    if (action !== "add") this.tunnelPool?.forgetUnit(spark.id);
+    if (action !== "remove") return;
     try {
       const { updated, removed } = this.clusterStore.pruneUnit(spark.id);
-      for (const id of [...updated, ...removed]) this.cache.delete(clusterTargetId(id));
+      for (const id of [...updated, ...removed]) this.invalidate(clusterTargetId(id));
     } catch (err) {
       console.error("[fleet] could not prune clusters:", errorMessage(err));
     }
-    this.cache.delete(nodeTargetId(spark.id));
+    this.invalidate(nodeTargetId(spark.id));
     this.backoff.recordSuccess(nodeTargetId(spark.id));
   }
 
@@ -612,5 +801,6 @@ export class FleetModelManager {
     if (this.backgroundTimer) clearInterval(this.backgroundTimer);
     this.backgroundTimer = null;
     this.runner.shutdown();
+    this.tunnelPool?.closeAll();
   }
 }

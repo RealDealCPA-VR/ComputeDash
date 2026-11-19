@@ -17,9 +17,10 @@ import { AppLink } from "../ui/AppLink";
 import { idToPath } from "../../constants";
 import { VramBreakdownBar } from "../ui/VramBreakdownBar";
 import { HEADROOM_THRESHOLDS_MB, computeVramBreakdown, memoryModelFor, type VramBreakdownContext } from "../../shared/vramBreakdown";
-import { ImageIcon, PowerOnIcon } from "../ui/icons";
+import { ImageIcon, LayersIcon, PowerOnIcon } from "../ui/icons";
 import { formatCtx } from "./fleetStats";
 import { ModelLauncher } from "./ModelLauncher";
+import { modelsHref } from "../FleetBoard/fleetBoardModel";
 
 type Unit = "celsius" | "fahrenheit";
 type WakeMessage = "sent" | "failed" | { raw: string } | null;
@@ -117,6 +118,7 @@ function SparkCardImpl({
   siblingServing = false,
   temperatureUnit,
   onSelect,
+  onOpenModels,
 }: {
   spark: SparkSnapshot;
   /** The head this worker serves for (workers only). */
@@ -127,6 +129,8 @@ function SparkCardImpl({
   siblingServing?: boolean;
   temperatureUnit: Unit;
   onSelect?: (id: string) => void;
+  /** Open this unit on the Models page (shown while the fleet model manager is on). */
+  onOpenModels?: (targetId: string) => void;
 }) {
   const { t } = useTranslation("overview");
   const gpu = spark.metrics.gpu;
@@ -623,7 +627,19 @@ function SparkCardImpl({
           ))}
         </>
       )}
-
+      {onOpenModels ? (
+        <div className="ov-sc__links">
+          <AppLink
+            href={modelsHref(`node:${spark.id}`)}
+            className="ov-sc__models"
+            onNavigate={() => onOpenModels(`node:${spark.id}`)}
+            title={t("card.modelsTitle", { name: spark.name })}
+          >
+            <LayersIcon className="h-3.5 w-3.5" />
+            {t("card.models")}
+          </AppLink>
+        </div>
+      ) : null}
     </div>
   );
 }

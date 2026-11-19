@@ -435,3 +435,23 @@ test("a cached cluster inventory without collectedAt is stale: rows unknown, las
   assert.equal(row.collectedAt, null);
   assert.deepEqual(row.lastSeen, { state: "serving", at: null });
 });
+
+test("served-model memory belongs to the caller: none is shared between collections without a store", async () => {
+  const runningDeps = (extra) =>
+    deps({ launchers: launcherApi({ spark1: [{ id: "gemma-abc123", name: "Gemma launcher", port: 8001 }] }, { "gemma-abc123": "running" }), ...extra });
+  const stoppedDeps = (extra) =>
+    deps({
+      launchers: launcherApi({ spark1: [{ id: "gemma-abc123", name: "Gemma launcher", port: 8001 }] }, { "gemma-abc123": "stopped" }),
+      snapshots: snapshots({ spark1: { online: true, metrics: { llm: [entry(8001, null, [], { available: false })] } } }),
+      ...extra,
+    });
+  const gemma = (inv) => inv.models.find((x) => x.launcherId === "gemma-abc123");
+  // Seen serving without a store: a later collection (another manager, another test) knows nothing.
+  assert.equal(gemma(await collectInventory(node("spark1"), runningDeps({ servedKeys: undefined }))).state, "serving");
+  assert.equal(gemma(await collectInventory(node("spark1"), stoppedDeps({ servedKeys: undefined }))).state, "configured");
+  // With one store, the memory holds (rule 7).
+  const store = new Set();
+  await collectInventory(node("spark1"), runningDeps({ servedKeys: store }));
+  assert.equal(gemma(await collectInventory(node("spark1"), stoppedDeps({ servedKeys: store }))).state, "stopped");
+  assert.equal(gemma(await collectInventory(node("spark1"), stoppedDeps({ servedKeys: new Set() }))).state, "configured", "another store is separate");
+});

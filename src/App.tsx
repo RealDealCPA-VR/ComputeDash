@@ -1,6 +1,6 @@
 import { BenchIcon } from "./components/bench/BenchIcon";
 import { setConfiguredTimeZone } from "./shared/timeZone";
-import { useState, useCallback, useEffect, useMemo } from "react";
+import { lazy, Suspense, useState, useCallback, useEffect, useMemo } from "react";
 import { useTranslation } from "react-i18next";
 import { useBenchLabels } from "./components/shell/useBenchLabels";
 import { useSnapshot } from "./hooks/useSnapshot";
@@ -14,17 +14,12 @@ import { MobileTabBar } from "./components/shell/MobileTabBar";
 import { InstallPrompt } from "./components/shell/InstallPrompt";
 import { CommandPalette, type PaletteCommand } from "./components/shell/CommandPalette";
 import { openShowcase, showcaseTarget } from "./components/shell/sparkSummary";
-import { AddSparkDialog } from "./components/AddSparkDialog";
-import { EditSparkDialog } from "./components/EditSparkDialog";
-import { SparkPage } from "./components/SparkPage/SparkPage";
 import { HermesUpdateDialog } from "./components/SparkPage/HermesUpdateDialog";
 import { OverviewPage } from "./components/OverviewPage/OverviewPage";
-import { ShowcasePage } from "./components/ShowcasePage/ShowcasePage";
-import { ShowcaseView } from "./components/ShowcasePage/ShowcaseView";
-import { KioskPage } from "./components/KioskPage/KioskPage";
 import { ThemeSwitch } from "./components/ThemeSwitch";
-import { SettingsDialog } from "./components/SettingsDialog";
-import { HarnessWizard } from "./components/HarnessWizard";
+import { PageFallback } from "./components/shell/PageFallback";
+import { OperationChip } from "./components/shell/OperationChip";
+import { PageErrorBoundary } from "./components/shell/PageErrorBoundary";
 import {
   GearIcon,
   GridIcon,
@@ -46,7 +41,7 @@ import {
   DiskIcon,
   LayersIcon,
 } from "./components/ui/icons";
-import { ConnectionBanner } from "./components/ui/ConnectionBanner";
+import { ConnectionBanner, useTelemetryStale } from "./components/ui/ConnectionBanner";
 import { ErrorBanner } from "./components/ui/ErrorBanner";
 import {
   ACTIVITY_ID,
@@ -66,15 +61,8 @@ import {
   isPageId,
   isStaleSparkId,
 } from "./constants";
-import { TokensPage } from "./components/TokensPage/TokensPage";
-import { CostPage } from "./components/CostPage/CostPage";
-import { ApiKeysPage } from "./components/ApiKeysPage/ApiKeysPage";
-import { ModelsPage } from "./components/ModelsPage/ModelsPage";
-import { EnergyPage } from "./components/EnergyPage/EnergyPage";
-import { TempsPage } from "./components/TempsPage/TempsPage";
-import { ActivityPage } from "./components/ActivityPage/ActivityPage";
-import { StoragePage } from "./components/StoragePage/StoragePage";
-import { BenchPage } from "./components/bench/BenchPage";
+import { modelsHref } from "./components/FleetBoard/fleetBoardModel";
+import { withPageTransition } from "./hooks/pageTransition";
 import { BENCH_SPARK_KEY, NAV_BENCH_TYPES } from "./components/bench/benchCatalog";
 import type { AuthMode, Settings, SparkSnapshot } from "./api/types";
 import { AccessTokenPrompt } from "./components/AccessTokenDialog";
@@ -82,6 +70,32 @@ import { onTokenChange } from "./api/authToken";
 import { isWorkerSpark } from "./api/sparkRole";
 import { mergeTabOrderKeepingHidden } from "./api/tabOrder";
 import { clearSettingsHash, useSettingsHash } from "./hooks/settingsLink";
+
+// Route pages and dialogs load on demand; the Overview and the shell stay in the main bundle.
+const SparkPage = lazy(() => import("./components/SparkPage/SparkPage").then((m) => ({ default: m.SparkPage })));
+const ShowcasePage = lazy(() => import("./components/ShowcasePage/ShowcasePage").then((m) => ({ default: m.ShowcasePage })));
+const ShowcaseView = lazy(() => import("./components/ShowcasePage/ShowcaseView").then((m) => ({ default: m.ShowcaseView })));
+const KioskPage = lazy(() => import("./components/KioskPage/KioskPage").then((m) => ({ default: m.KioskPage })));
+const TokensPage = lazy(() => import("./components/TokensPage/TokensPage").then((m) => ({ default: m.TokensPage })));
+const CostPage = lazy(() => import("./components/CostPage/CostPage").then((m) => ({ default: m.CostPage })));
+const ApiKeysPage = lazy(() => import("./components/ApiKeysPage/ApiKeysPage").then((m) => ({ default: m.ApiKeysPage })));
+const ModelsPage = lazy(() => import("./components/ModelsPage/ModelsPage").then((m) => ({ default: m.ModelsPage })));
+const EnergyPage = lazy(() => import("./components/EnergyPage/EnergyPage").then((m) => ({ default: m.EnergyPage })));
+const TempsPage = lazy(() => import("./components/TempsPage/TempsPage").then((m) => ({ default: m.TempsPage })));
+const ActivityPage = lazy(() => import("./components/ActivityPage/ActivityPage").then((m) => ({ default: m.ActivityPage })));
+const StoragePage = lazy(() => import("./components/StoragePage/StoragePage").then((m) => ({ default: m.StoragePage })));
+const BenchPage = lazy(() => import("./components/bench/BenchPage").then((m) => ({ default: m.BenchPage })));
+const AddSparkDialog = lazy(() => import("./components/AddSparkDialog").then((m) => ({ default: m.AddSparkDialog })));
+const EditSparkDialog = lazy(() => import("./components/EditSparkDialog").then((m) => ({ default: m.EditSparkDialog })));
+const SettingsDialog = lazy(() => import("./components/SettingsDialog").then((m) => ({ default: m.SettingsDialog })));
+const HarnessWizard = lazy(() => import("./components/HarnessWizard").then((m) => ({ default: m.HarnessWizard })));
+
+/** True from the first time `open` is true: a lazy dialog mounts on first use and then stays, keeping its close animation. */
+function useOpenedOnce(open: boolean): boolean {
+  const [opened, setOpened] = useState(open);
+  if (open && !opened) setOpened(true);
+  return opened || open;
+}
 
 function placeholderSnapshot(
   id: string,
@@ -171,6 +185,9 @@ function placeholderSnapshot(
   };
 }
 
+/** How long the first WebSocket snapshot may take before the REST list is asked instead. */
+const FALLBACK_PROBE_MS = 3_000;
+
 function DashboardApp() {
   const { t } = useTranslation("shell");
   const benchLabels = useBenchLabels();
@@ -187,8 +204,7 @@ function DashboardApp() {
   } = useSnapshot();
   const sparks = snapSparks;
   const activeSpark = liveActive;
-  const [telemetryNow, setTelemetryNow] = useState(Date.now());
-  const { navigate, replace } = useRoute(setActiveId);
+  const { navigate, replace } = useRoute(setActiveId, activeId);
   const [showAdd, setShowAdd] = useState(false);
   const [editId, setEditId] = useState<string | null>(null);
   const [showSettings, setShowSettings] = useState(false);
@@ -239,16 +255,11 @@ function DashboardApp() {
     : t("app.reorderError", { detail: actionError.detail });
   /** Used when WS is down so add/delete still updates the tab bar */
   const [fallbackSparks, setFallbackSparks] = useState<SparkSnapshot[]>([]);
+  /** True once the REST list has answered, so an empty fleet is known when the WebSocket never delivers. */
+  const [fallbackLoaded, setFallbackLoaded] = useState(false);
   const staleAfterMs = Math.max(10_000, 3 * (refreshInterval ?? 2_000));
-  const telemetryStale =
-    lastValidSnapshotAt != null && telemetryNow - lastValidSnapshotAt > staleAfterMs;
-
-  useEffect(() => {
-    if (lastValidSnapshotAt == null) return;
-    setTelemetryNow(Date.now());
-    const timer = window.setInterval(() => setTelemetryNow(Date.now()), 1_000);
-    return () => window.clearInterval(timer);
-  }, [lastValidSnapshotAt]);
+  // One timeout per snapshot, not a per-second clock: the tree re-renders only when this flips.
+  const telemetryStale = useTelemetryStale(lastValidSnapshotAt, staleAfterMs);
 
   // Prefer live WS data; fall back to API-fetched list when empty
   const liveSparks = sparks.length > 0 ? sparks : fallbackSparks;
@@ -315,7 +326,8 @@ function DashboardApp() {
   const displayActive = onPage
     ? null
     : displaySparks.find((s) => s.id === activeId) || activeSpark || null;
-  const fleetLoaded = lastValidSnapshotAt != null || fallbackSparks.length > 0;
+  // The REST list answered (even with no machines): the fleet is known without a WebSocket snapshot.
+  const fleetLoaded = lastValidSnapshotAt != null || fallbackSparks.length > 0 || fallbackLoaded;
   const staleSpark = isStaleSparkId(
     activeId,
     displaySparks.map((s) => s.id),
@@ -373,9 +385,10 @@ function DashboardApp() {
     document.documentElement.setAttribute("data-density", "compact");
   }, []);
 
-  const refreshFromApi = useCallback(async () => {
+  const refreshFromApi = useCallback(async ({ quiet = false }: { quiet?: boolean } = {}) => {
     try {
       const { sparks: configs } = await fetchSparks();
+      setFallbackLoaded(true);
       setFallbackSparks(
         configs.map((c) => {
           const existing = sparks.find((s) => s.id === c.id);
@@ -425,9 +438,26 @@ function DashboardApp() {
       if (isStaleSparkId(activeId, configs.map((c) => c.id), true)) replace(OVERVIEW_ID);
     } catch (err) {
       console.error("Failed to refresh sparks:", err);
-      setActionError({ kind: "refresh", detail: err instanceof Error ? err.message : String(err) });
+      if (!quiet) setActionError({ kind: "refresh", detail: err instanceof Error ? err.message : String(err) });
     }
   }, [sparks, activeId, replace]);
+
+  // No WebSocket snapshot yet (e.g. a proxy without WebSocket support): ask the REST list once
+  // after a grace period, and again when a new access token is saved, so the Overview can leave
+  // its first-load skeleton (an empty fleet shows "Add your first machine"). The connection
+  // banner already reports the failure, so the probe stays quiet.
+  const awaitingFleet = lastValidSnapshotAt == null && !fallbackLoaded;
+  useEffect(() => {
+    if (!awaitingFleet) return;
+    const timer = setTimeout(() => void refreshFromApi({ quiet: true }), FALLBACK_PROBE_MS);
+    const unsubscribe = onTokenChange((token) => {
+      if (token) void refreshFromApi({ quiet: true });
+    });
+    return () => {
+      clearTimeout(timer);
+      unsubscribe();
+    };
+  }, [awaitingFleet, refreshFromApi]);
 
   const handleReorder = useCallback(
     async (orderedIds: string[]) => {
@@ -492,6 +522,35 @@ function DashboardApp() {
   useEffect(() => {
     if (settings && activeId === MODELS_ID && !fleetModelsEnabled) navigate(OVERVIEW_ID);
   }, [settings, activeId, fleetModelsEnabled, navigate]);
+
+  /** The Models page, on a target when given (`?target=`); a page already open re-reads it on popstate. */
+  const openModels = useCallback(
+    (targetId?: string | null) => {
+      const href = modelsHref(targetId);
+      // Already there: no duplicate history entry, no synthetic popstate.
+      if (activeId === MODELS_ID && href === window.location.pathname + window.location.search) return;
+      window.history.pushState(null, "", href);
+      if (activeId === MODELS_ID) {
+        window.dispatchEvent(new PopStateEvent("popstate"));
+        return;
+      }
+      withPageTransition(() => setActiveId(MODELS_ID), { scrollTop: true });
+    },
+    [activeId, setActiveId]
+  );
+  const openAdd = useCallback(() => setShowAdd(true), []);
+  const targetName = useCallback(
+    (targetId: string) => {
+      const unitId = targetId.startsWith("node:") ? targetId.slice(5) : null;
+      const unit = unitId ? displaySparks.find((s) => s.id === unitId) : null;
+      return unit?.name ?? (targetId.startsWith("cluster:") ? targetId.slice(8) : unitId ?? targetId);
+    },
+    [displaySparks]
+  );
+  const addOpened = useOpenedOnce(showAdd);
+  const editOpened = useOpenedOnce(editId != null);
+  const settingsOpened = useOpenedOnce(showSettings);
+  const harnessOpened = useOpenedOnce(showHarness);
 
   const paletteCommands = useMemo<PaletteCommand[]>(() => {
     const cmds: PaletteCommand[] = [
@@ -607,11 +666,13 @@ function DashboardApp() {
               connected={connected}
               lastValidSnapshotAt={lastValidSnapshotAt}
               snapshotError={snapshotError}
-              now={telemetryNow}
               stale={telemetryStale}
             />
+            <OperationChip enabled={fleetModelsEnabled && settings != null} nameOf={targetName} onOpen={openModels} />
             <ErrorBanner message={actionErrorMessage} onDismiss={() => setActionError(null)} />
             <main key={chartTimeZone} className={telemetryStale || !connected ? "telemetry-stale" : undefined}>
+              <PageErrorBoundary resetKey={activeId}>
+              <Suspense fallback={<PageFallback />}>
               {activeId === TOKENS_ID ? (
                 <TokensPage sparks={displaySparks} onSelectSpark={navigate} />
               ) : activeId === COST_ID ? (
@@ -619,7 +680,7 @@ function DashboardApp() {
               ) : activeId === API_KEYS_ID ? (
                 apiKeysEnabled ? <ApiKeysPage /> : null
               ) : activeId === MODELS_ID ? (
-                fleetModelsEnabled ? <ModelsPage /> : null
+                fleetModelsEnabled ? <ModelsPage onAddUnit={openAdd} /> : null
               ) : activeId === ENERGY_ID ? (
                 <EnergyPage sparks={displaySparks} settings={settings} onSelectSpark={navigate} />
               ) : activeId === TEMPS_ID ? (
@@ -655,6 +716,10 @@ function DashboardApp() {
                   temperatureUnit={settings?.temperatureUnit ?? "celsius"}
                   onSelectSpark={navigate}
                   onNavigate={navigate}
+                  loading={!fleetLoaded}
+                  onAddUnit={openAdd}
+                  showFleetBoard={fleetModelsEnabled && settings != null}
+                  onOpenModels={openModels}
                 />
               ) : displayActive ? (
                 <SparkPage
@@ -684,6 +749,8 @@ function DashboardApp() {
                   </button>
                 </div>
               )}
+              </Suspense>
+              </PageErrorBoundary>
             </main>
           </div>
         </div>
@@ -700,6 +767,10 @@ function DashboardApp() {
       <InstallPrompt />
       <CommandPalette open={showPalette} onClose={() => setShowPalette(false)} commands={paletteCommands} />
       <HermesUpdateDialog />
+      {/* Each lazy dialog suspends on its own, so loading one never hides another that is open. */}
+      <PageErrorBoundary floating>
+      {addOpened ? (
+      <Suspense fallback={null}>
       <AddSparkDialog
         open={showAdd}
         onClose={() => setShowAdd(false)}
@@ -708,6 +779,10 @@ function DashboardApp() {
         }}
         defaultLlmPort={settings?.defaultLlmPort ?? 8888}
       />
+      </Suspense>
+      ) : null}
+      {editOpened ? (
+      <Suspense fallback={null}>
       <EditSparkDialog
         open={editId != null}
         sparkId={editId}
@@ -723,6 +798,10 @@ function DashboardApp() {
           void refreshFromApi();
         }}
       />
+      </Suspense>
+      ) : null}
+      {settingsOpened ? (
+      <Suspense fallback={null}>
       <SettingsDialog
         open={showSettings}
         section={settingsSection}
@@ -735,6 +814,10 @@ function DashboardApp() {
           setShowHarness(true);
         }}
       />
+      </Suspense>
+      ) : null}
+      {harnessOpened ? (
+      <Suspense fallback={null}>
       <HarnessWizard
         open={showHarness}
         onClose={() => setShowHarness(false)}
@@ -745,6 +828,9 @@ function DashboardApp() {
           llmPorts: spark.llmPorts?.length ? spark.llmPorts : [spark.llmPort],
         }))}
       />
+      </Suspense>
+      ) : null}
+      </PageErrorBoundary>
     </div>
   );
 }
@@ -755,9 +841,17 @@ function App() {
   return (
     <>
       {route.mode === "showcase" && route.showcaseSparkId ? (
-        <ShowcasePage sparkId={route.showcaseSparkId} />
+        <PageErrorBoundary>
+          <Suspense fallback={<PageFallback />}>
+            <ShowcasePage sparkId={route.showcaseSparkId} />
+          </Suspense>
+        </PageErrorBoundary>
       ) : route.mode === "kiosk" ? (
-        <KioskPage />
+        <PageErrorBoundary>
+          <Suspense fallback={<PageFallback />}>
+            <KioskPage />
+          </Suspense>
+        </PageErrorBoundary>
       ) : (
         <DashboardApp />
       )}

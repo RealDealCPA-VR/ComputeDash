@@ -944,3 +944,33 @@
 .ov .ov-help:focus-visible {
   opacity: 1;
 }
+
+/* Per-card link to the unit's model controls (Models page). */
+.ov .ov-sc__links {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 2px;
+}
+.ov .ov-sc__models {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 550;
+  color: var(--color-muted);
+  text-decoration: none;
+}
+.ov .ov-sc__models:hover,
+.ov .ov-sc__models:focus-visible {
+  background: var(--color-surface-hover);
+  color: var(--color-text);
+}
+
+/* First load: skeleton cards instead of an empty state that is not true yet. */
+.ov .ov-loading {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 14px;
+}

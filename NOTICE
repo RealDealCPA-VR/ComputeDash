@@ -15,3 +15,19 @@ Open Font License 1.1) are listed in THIRD_PARTY_NOTICES.md.
 
 Third-party data bundled in server/collectors/data/ (GSM8K, MMLU) is covered
 by its own MIT notices, see server/collectors/data/NOTICE.md.
+
+----------------------------------------------------------------------------
+
+ComputeDash
+Modifications Copyright 2026 the ComputeDash contributors
+(https://github.com/RealDealCPA-VR/ComputeDash)
+
+ComputeDash is a modified version of sparkDash by Mia's AI Lab
+(https://github.com/MiaAI-Lab/sparkDash). The modifications are licensed under
+the Apache License, Version 2.0, the same license as the original work. The
+notices above for sparkDash, its MIT-licensed earlier versions and its
+third-party components continue to apply.
+
+As required by section 4(b) of the Apache License, the files changed from the
+original sparkDash are listed in docs/MODIFICATIONS.md, and this repository's
+version-control history records every modification made in ComputeDash.

@@ -204,3 +204,61 @@ test("servingCount is null when any identified runtime failed (a partial count i
   // A configured port where nothing was identified is not a failed source.
   assert.equal(count([{ engine: "unknown", port: 9000, reachable: false, error: "no engine answered on port 9000" }]), 1);
 });
+
+test("servingModels lists the de-duplicated serving modelIds alphabetically, null exactly when servingCount is", () => {
+  const inventories = new Map([
+    [
+      "node:dell",
+      served("node:dell", [
+        ["phi3", 11434, "serving", "http://10.0.0.9:11434"],
+        ["Llama3:8b", 11434, "serving", "http://10.0.0.9:11434/"],
+        ["llama3:8b", 11434, "serving", "HTTP://10.0.0.9:11434"], // same endpoint after normalizing; model ids are case-sensitive
+        ["phi3", 11434, "serving", "http://10.0.0.9:11434/"], // duplicate of the first row
+        ["gemma", 11434, "installed", "http://10.0.0.9:11434"],
+      ]),
+    ],
+    ["node:spark1", served("node:spark1", [["small", 8001, "loaded"]])],
+    ["node:spark2", served("node:spark2", [["y", 8000]], { stale: true })],
+    ["cluster:sparks", served("cluster:sparks", [["Qwen/Qwen3-235B", 8000]])],
+  ]);
+  const by = Object.fromEntries(buildTargets({ units, clusters, snapshots, inventories }).map((x) => [x.targetId, x]));
+  assert.deepEqual(by["node:dell"].servingModels, ["Llama3:8b", "llama3:8b", "phi3"].sort((a, b) => a.localeCompare(b)));
+  assert.equal(by["node:dell"].servingCount, by["node:dell"].servingModels.length, "same source, same de-duplication");
+  assert.deepEqual(by["node:spark1"].servingModels, [], "known, nothing serving");
+  assert.equal(by["node:spark1"].servingCount, 0);
+  assert.equal(by["node:spark2"].servingModels, null, "stale → unknown");
+  assert.equal(by["node:mac"].servingModels, null, "offline / no inventory → unknown");
+  assert.deepEqual(by["cluster:sparks"].servingModels, ["Qwen/Qwen3-235B"]);
+  assert.equal(by["cluster:desk"].servingModels, null, "a group has no instance of its own");
+  for (const x of Object.values(by)) assert.equal(x.servingModels === null, x.servingCount === null, x.targetId);
+  // A failed runtime makes both unknown.
+  const failed = new Map([
+    ["node:dell", served("node:dell", [["phi3", 11434]], { runtimes: [{ engine: "ollama", port: 11434, reachable: false, error: "down" }] })],
+  ]);
+  const dell = buildTargets({ units, clusters, snapshots, inventories: failed }).find((x) => x.id === "dell");
+  assert.equal(dell.servingCount, null);
+  assert.equal(dell.servingModels, null);
+});
+
+test("activeOperationId: a node shows its own or its cluster's operation; a cluster also a member's", () => {
+  const locks = (entries) => ({ busyTargetIds: new Set(entries.map(([k]) => k)), activeOperations: new Map(entries) });
+  // A cluster operation locks the cluster and its members.
+  let t = buildTargets({ units, clusters, snapshots, ...locks([["cluster:sparks", "op-c"], ["node:spark1", "op-c"], ["node:spark2", "op-c"]]) });
+  let by = Object.fromEntries(t.map((x) => [x.targetId, x]));
+  assert.equal(by["cluster:sparks"].activeOperationId, "op-c");
+  assert.equal(by["node:spark1"].activeOperationId, "op-c");
+  assert.equal(by["node:spark2"].activeOperationId, "op-c");
+  assert.equal(by["node:dell"].activeOperationId, null);
+  assert.equal(by["cluster:desk"].activeOperationId, null);
+  // A node operation shows on every cluster containing the node, which it blocks.
+  t = buildTargets({ units, clusters, snapshots, ...locks([["node:mac", "op-n"]]) });
+  by = Object.fromEntries(t.map((x) => [x.targetId, x]));
+  assert.equal(by["node:mac"].activeOperationId, "op-n");
+  assert.equal(by["cluster:desk"].activeOperationId, "op-n");
+  assert.equal(by["cluster:desk"].busy, true);
+  assert.equal(by["cluster:sparks"].activeOperationId, null);
+  assert.equal(by["cluster:sparks"].busy, false);
+  for (const x of t) assert.equal(x.busy, x.activeOperationId !== null, x.targetId);
+  // Without operations every id is null.
+  for (const x of buildTargets({ units, clusters, snapshots })) assert.equal(x.activeOperationId, null);
+});

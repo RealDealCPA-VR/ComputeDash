@@ -46,8 +46,9 @@
       "workersHiddenDetail": "Hide worker nodes is on in Settings. Turn it off to show Worker-role Sparks again.",
       "allOfflineTitle": "All Sparks are offline",
       "allOfflineDetail": "Auto-hide is enabled and no Sparks are currently online.",
-      "noSparksTitle": "No Sparks registered",
-      "noSparksDetail": "Click the + tab to add a DGX Spark unit."
+      "noSparksTitle": "No machines yet",
+      "noSparksDetail": "Add a DGX Spark, GPU workstation or Mac to start monitoring it here.",
+      "addFirst": "Add your first machine"
     },
     "filters": {
       "aria": "Filter fleet units",
@@ -58,7 +59,8 @@
       "online": "Online",
       "offline": "Offline",
       "issues": "Issues"
-    }
+    },
+    "loading": "Loading the fleet"
   },
   "batch": {
     "hermesStarted_one": "{{count}} update started",
@@ -206,7 +208,9 @@
     "gpuPowerShort": "Power",
     "workerHeadCompletedDecode": " · {{value}} completed",
     "workerHeadCompletedPrefill": " · {{value}} prefill, incl. cached",
-    "completedDecodeRate": "{{value}} tok/s · completed"
+    "completedDecodeRate": "{{value}} tok/s · completed",
+    "models": "Models",
+    "modelsTitle": "Model controls for {{name}}"
   },
   "launcher": {
     "modelsUnavailable": "Models unavailable",
@@ -364,5 +368,83 @@
     "cancel": "Cancel",
     "failedRetry": "Restart failed — retry",
     "sparkDash": "Restart sparkDash"
+  },
+  "fleetBoard": {
+    "title": "Fleet board",
+    "caption": "What each machine is doing and which model it is serving right now",
+    "updated": "Updated {{age}} ago",
+    "openModels": "Open Models",
+    "loading": "Loading the fleet board",
+    "empty": "No machines or clusters yet.",
+    "columns": {
+      "machine": "Machine",
+      "hardware": "Hardware",
+      "serving": "Now serving",
+      "live": "Live",
+      "actions": "Actions"
+    },
+    "health": {
+      "ready": "Ready",
+      "degraded": "Degraded",
+      "unreachable": "Unreachable",
+      "unknown": "Status unknown"
+    },
+    "cluster": "Cluster",
+    "group": "Group",
+    "head": "(head)",
+    "membersLabel": "Members",
+    "unknown": "Unknown",
+    "unifiedMemory": "{{size}} unified",
+    "serving": {
+      "none": "Nothing serving",
+      "count_one": "{{count}} model serving",
+      "count_other": "{{count}} models serving",
+      "more_one": "+{{count}} more",
+      "more_other": "+{{count}} more",
+      "unknown": "Unknown",
+      "unreachable": "Unreachable",
+      "reasonUnreachable": "The machine is not answering, so what it serves is not known.",
+      "reasonGroup": "A group runs no model of its own; see its members.",
+      "reasonNoInventory": "No recent model inventory yet; it refreshes within a minute.",
+      "reasonNotReported": "This server does not report the serving models."
+    },
+    "live": {
+      "none": "No live data",
+      "offline": "Offline",
+      "headOffline": "Head offline",
+      "tps": "tok/s",
+      "idle": "No endpoint answering",
+      "unmeasuredTitle": "An endpoint answers, but its rate could not be read",
+      "headSuffix": "(head)",
+      "memoryTitle": "{{used}} of {{total}} in use",
+      "unified": "Memory",
+      "vram": "VRAM",
+      "gpuTemp": "GPU"
+    },
+    "busy": "Operation in progress",
+    "operation": {
+      "switch": "Switching to {{model}}",
+      "start": "Starting {{model}}",
+      "stop": "Stopping {{model}}",
+      "reload": "Reloading {{model}}",
+      "unknownModel": "a model",
+      "step": "Step {{step}}/{{total}}"
+    },
+    "viewOperation": "View",
+    "switch": "Switch…",
+    "switchLabel": "Switch the model on {{name}}",
+    "loadingModels": "Loading…",
+    "logs": "Logs",
+    "logsLabel": "Logs for {{name}}",
+    "manage": "Manage",
+    "tokenHint": "Needs an access token",
+    "tokenHintTitle": "Model control needs a dashboard access token. The Models page explains how to set one.",
+    "errors": {
+      "targets": "Couldn't load the fleet board: {{error}}",
+      "stale": "Couldn't refresh the fleet board ({{error}}). Showing the last answer.",
+      "inventory": "Couldn't load the models: {{error}}",
+      "switch": "The switch could not start: {{error}}",
+      "busy": "Another operation is running: {{error}}"
+    }
   }
 }

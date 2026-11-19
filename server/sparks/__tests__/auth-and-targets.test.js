@@ -8,11 +8,15 @@ test("loopback bind does not require a remote token", () => {
   assert.equal(requireRemoteAuth("0.0.0.0"), true);
 });
 
-test("open remote bind is on by default and off when SPARKDASH_ALLOW_OPEN_REMOTE=0", () => {
+test("open remote bind fails closed by default and opens only for SPARKDASH_ALLOW_OPEN_REMOTE=1", () => {
   const previous = process.env.SPARKDASH_ALLOW_OPEN_REMOTE;
   try {
     delete process.env.SPARKDASH_ALLOW_OPEN_REMOTE;
-    assert.equal(allowOpenRemote(), true);
+    assert.equal(allowOpenRemote(), false);
+    process.env.SPARKDASH_ALLOW_OPEN_REMOTE = "";
+    assert.equal(allowOpenRemote(), false);
+    process.env.SPARKDASH_ALLOW_OPEN_REMOTE = "true";
+    assert.equal(allowOpenRemote(), false);
     process.env.SPARKDASH_ALLOW_OPEN_REMOTE = "1";
     assert.equal(allowOpenRemote(), true);
     process.env.SPARKDASH_ALLOW_OPEN_REMOTE = "0";

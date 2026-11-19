@@ -183,4 +183,40 @@ describe("EditSparkDialog SSH port", () => {
       expect.objectContaining({ lanIp: "192.168.1.60", ssh: expect.objectContaining({ host: "192.168.1.60" }) })
     );
   });
+
+  it("shows a Mac unit as a Mac in the unit type select, not as a Windows PC", async () => {
+    vi.mocked(fetchSparks).mockResolvedValue({ sparks: [{ ...spark, kind: "mac", platform: "darwin" }] });
+    render(<EditSparkDialog open sparkId="lab" onClose={() => {}} onSaved={() => {}} />);
+    await flush();
+    const select = document.querySelector<HTMLSelectElement>(".modal-sheet select")!;
+    expect(select.value).toBe("mac");
+    expect(select.selectedOptions[0].textContent).toBe("Apple Silicon Mac (macOS over SSH, or via the Mac node agent)");
+  });
+
+  it("stays open with a notice when saving a new host cleared stored credentials", async () => {
+    const onClose = vi.fn();
+    const onSaved = vi.fn();
+    vi.mocked(updateSpark).mockResolvedValue({ success: true, spark, credentialsCleared: ["sshPassword", "llmApiKeys"] } as never);
+    render(<EditSparkDialog open sparkId="lab" onClose={onClose} onSaved={onSaved} />);
+    await flush();
+    const save = Array.from(document.querySelectorAll("button")).find((button) => button.textContent === "Save");
+    await act(async () => {
+      save?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    expect(onSaved).toHaveBeenCalled();
+    expect(onClose).not.toHaveBeenCalled();
+    expect(document.querySelector("[data-testid=credentials-cleared]")?.textContent).toContain("stored SSH password and LLM API keys were cleared");
+  });
+
+  it("closes as before when the server reports nothing cleared", async () => {
+    const onClose = vi.fn();
+    render(<EditSparkDialog open sparkId="lab" onClose={onClose} onSaved={() => {}} />);
+    await flush();
+    const save = Array.from(document.querySelectorAll("button")).find((button) => button.textContent === "Save");
+    await act(async () => {
+      save?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    expect(onClose).toHaveBeenCalled();
+    expect(document.querySelector("[data-testid=credentials-cleared]")).toBeNull();
+  });
 });

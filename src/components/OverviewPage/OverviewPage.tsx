@@ -12,7 +12,8 @@ import { FleetKpis, type KpiVisibility } from "./FleetKpis";
 import { ACTIVITY_ID, ENERGY_ID, TOKENS_ID } from "../../constants";
 import { SparkCard } from "./SparkCard";
 import { ActivityFeed } from "./ActivityFeed";
-import { ActivityIcon, PowerOnIcon, RotateIcon } from "../ui/icons";
+import { ActivityIcon, PlusIcon, PowerOnIcon, RotateIcon } from "../ui/icons";
+import { FleetBoard } from "../FleetBoard/FleetBoard";
 import { formatMb } from "../../shared/formatBytes";
 import { vramContextFor } from "../../shared/vramBreakdown";
 import { makeHeadResolver } from "../../shared/sparkHead";
@@ -42,6 +43,14 @@ interface OverviewPageProps {
   onSelectSpark?: (id: string) => void;
   /** Open a dedicated page (Token totals, Fleet energy, Activity). */
   onNavigate?: (id: string) => void;
+  /** The fleet list has not arrived yet: show skeletons, not an empty state. */
+  loading?: boolean;
+  /** Opens the Add dialog (the empty state's primary action). */
+  onAddUnit?: () => void;
+  /** Fleet model manager on: show the fleet board and the per-card Models links. */
+  showFleetBoard?: boolean;
+  /** Open the Models page, on a target (e.g. "node:<unitId>") when given. */
+  onOpenModels?: (targetId?: string | null) => void;
 }
 
 export function OverviewPage({
@@ -61,6 +70,10 @@ export function OverviewPage({
   temperatureUnit = "celsius",
   onSelectSpark,
   onNavigate,
+  loading = false,
+  onAddUnit,
+  showFleetBoard = false,
+  onOpenModels,
 }: OverviewPageProps) {
   const { t } = useTranslation("overview");
   const [query, setQuery] = useState("");
@@ -199,6 +212,29 @@ export function OverviewPage({
     }
   }
 
+  if (loading && sparks.length === 0) {
+    return (
+      <div className="ov" aria-busy="true">
+        <div className="ov-title">
+          <div>
+            <h1>{t("page.title")}</h1>
+            <div className="ov-meta" role="status">{t("page.loading")}</div>
+          </div>
+        </div>
+        <div className="ov-loading" aria-hidden="true">
+          {[0, 1, 2].map((i) => (
+            <div key={i} className="panel skel-card">
+              <i className="skel-bar skel-bar--s" />
+              <i className="skel-bar" />
+              <i className="skel-bar" />
+              <i className="skel-bar skel-bar--s" />
+            </div>
+          ))}
+        </div>
+      </div>
+    );
+  }
+
   if (withoutWorkers.length === 0 || (hideOffline && withoutWorkers.every((spark) => !spark.online))) {
     const allWorkersHidden = hideWorkers && sparks.length > 0 && withoutWorkers.length === 0;
     const allOffline = hideOffline && withoutWorkers.length > 0;
@@ -219,6 +255,12 @@ export function OverviewPage({
         </div>
         <h2 className="text-sm font-semibold text-text-strong">{title}</h2>
         <p className="mt-1 text-xs text-muted">{detail}</p>
+        {sparks.length === 0 && onAddUnit ? (
+          <button type="button" className="btn btn--primary mt-4" onClick={onAddUnit}>
+            <PlusIcon className="h-3.5 w-3.5" />
+            {t("page.empty.addFirst")}
+          </button>
+        ) : null}
       </div>
     );
   }
@@ -321,6 +363,10 @@ export function OverviewPage({
         serverAlerts={serverAlerts}
       />
 
+      {showFleetBoard ? (
+        <FleetBoard sparks={sparks} temperatureUnit={temperatureUnit} onSelectSpark={onSelectSpark} onOpenModels={onOpenModels} />
+      ) : null}
+
       {showOverviewSearch ? (
         <div className="ov-search" role="search" aria-label={t("page.filters.aria")}>
           <input
@@ -360,6 +406,7 @@ export function OverviewPage({
                 siblingServing={ctx?.siblingServing ?? false}
                 temperatureUnit={temperatureUnit}
                 onSelect={onSelectSpark}
+                onOpenModels={showFleetBoard ? onOpenModels : undefined}
               />
             );
           })}

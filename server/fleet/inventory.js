@@ -87,6 +87,7 @@ import { MAC_PROFILE_SLOT } from "./adapters/macProfile.js";
  * @property {{ inFlight?: (targetId: string, modelKey: string) => ("start"|"stop"|null),
  *   lastFailure?: (targetId: string, modelKey: string) => ({ at: number, error: string }|null) }} [operations]
  * @property {Set<string>} [servedKeys]             "<targetId>#<modelKey>" seen serving this session
+ *   (rule 7); owned by the caller. Without it nothing is remembered between collections.
  * @property {TargetBackoff|null} [backoff]
  * @property {boolean} [force]                      ignore backoff (explicit refresh)
  * @property {FleetInventory|null} [previous]       last inventory of this target (lastSeen)
@@ -97,8 +98,6 @@ import { MAC_PROFILE_SLOT } from "./adapters/macProfile.js";
 const DEFAULT_TIMEOUT_MS = 4000;
 const DEFAULT_ACTION_TIMEOUT_MS = 300000;
 const DEFAULT_CLUSTER_CACHE_MAX_AGE_MS = 60000;
-/** Process-wide memory of models seen serving (rule 7: stopped vs configured). */
-const sessionServed = new Set();
 
 const STATE_ORDER = ["serving", "loaded", "starting", "stopping", "failed", "configured", "stopped", "installed", "unknown", "unreachable"];
 
@@ -475,7 +474,9 @@ function actionsFor(state, caps, usable) {
 const NO_ACTIONS = Object.freeze({ start: false, stop: false, reload: false, switchTo: false });
 
 function finalizeModels(table, { targetId, deps, usable, now }) {
-  const served = deps.servedKeys ?? sessionServed;
+  // The caller owns the memory (FleetModelManager keeps one per instance); without one, nothing
+  // is remembered beyond this collection.
+  const served = deps.servedKeys instanceof Set ? deps.servedKeys : new Set();
   const ops = deps.operations ?? {};
   const out = [];
   for (const r of table.records()) {

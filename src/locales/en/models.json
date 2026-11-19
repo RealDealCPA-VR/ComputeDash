@@ -48,7 +48,21 @@
   },
   "token": {
     "banner": "Model control is disabled until the dashboard has an access token. Set SPARKDASH_TOKEN on the server, then restart it. Inventory and logs stay available.",
-    "disabledReason": "Disabled: model control needs a dashboard access token (SPARKDASH_TOKEN on the server)."
+    "disabledReason": "Disabled: model control needs a dashboard access token (SPARKDASH_TOKEN on the server).",
+    "serverTitle": "Model control needs an access token on the dashboard host",
+    "serverBody": "Starting, stopping and switching models, and editing clusters, are refused until SPARKDASH_TOKEN is set where the dashboard runs. Inventory and logs stay available.",
+    "stepGenerate": "Generate a random token:",
+    "stepEnv": "Add it to the dashboard's .env file, replacing <value> with the token:",
+    "stepRestart": "Restart the dashboard, then enter the same token in this browser when it asks.",
+    "setupHint": "npm run setup does all of this for you.",
+    "docsLink": "Fleet model docs (docs/FLEET-MODELS.md)",
+    "copyCommand": "Copy command",
+    "copyEnvLine": "Copy .env line",
+    "copied": "Copied",
+    "copyFailed": "Copy failed: select the text instead",
+    "browserBody": "The dashboard has an access token, but this browser has not entered it yet. Model control will ask for it; enter it now to avoid the interruption.",
+    "enter": "Enter token",
+    "waitingForToken": "The server asked for the access token. Enter it in the dialog and this action runs again automatically."
   },
   "errors": {
     "targets": "Could not load targets: {{error}}",
@@ -66,7 +80,7 @@
     "clusters": "Clusters",
     "noNodes": "No nodes are registered.",
     "noClusters": "No clusters yet. Use Clusters to define one.",
-    "empty": "No targets yet. Add a Spark or GPU host, then refresh.",
+    "empty": "No machines yet. Add a DGX Spark, GPU host or Mac and its models appear here.",
     "kindDistributed": "Distributed cluster",
     "kindGroup": "Visual group",
     "kindCluster": "Cluster",
@@ -74,7 +88,12 @@
     "serving_other": "{{count}} models serving",
     "servingUnknown": "serving: unknown",
     "busy": "Operation running",
-    "memory": "Memory {{memory}}"
+    "memory": "Memory {{memory}}",
+    "addMachine": "Add a machine",
+    "servingNone": "nothing serving",
+    "servingOne": "Serving {{model}}",
+    "servingMore": "Serving {{model}} +{{more}}",
+    "servingList": "Serving: {{models}}"
   },
   "platform": {
     "linux": "Linux",
@@ -122,7 +141,9 @@
     "refreshInventory": "Refresh inventory",
     "groupNote": "This is a visual group: it has no inference endpoint of its own. Manage models on its member nodes.",
     "noDistributedControl": "No launch profile is set for this cluster, so distributed start and stop are not available.",
-    "busyElsewhere": "An operation is running on this target (or one of its cluster members). Controls are locked until it finishes."
+    "busyElsewhere": "An operation is running on this target (or one of its cluster members). Controls are locked until it finishes.",
+    "windowsNote": "Windows host: only Ollama models can be started, stopped or switched from here today. Other engines on this machine are shown read-only.",
+    "lockedRunning": "Controls are locked while this operation runs."
   },
   "inventory": {
     "unreachable": "The target is unreachable. No model state is shown as current until it answers again.",
@@ -130,7 +151,9 @@
     "errorsTitle_one": "{{count}} discovery source failed:",
     "errorsTitle_other": "{{count}} discovery sources failed:",
     "collectedAt": "Collected {{time}}",
-    "refreshFailed": "The last refresh failed. This inventory may be out of date."
+    "refreshFailed": "The last refresh failed. This inventory may be out of date.",
+    "staleBadge": "stale",
+    "staleBadgeHint": "Collected more than a minute ago. The page re-reads it every 20 seconds; Refresh inventory runs fresh discovery."
   },
   "runtimes": {
     "title": "Runtimes",
@@ -151,7 +174,13 @@
     "servedBy": "Served by {{cluster}}",
     "lastSeen": "last seen {{state}} {{time}}",
     "lastSeenNoTime": "last seen {{state}}",
-    "clusterRowStale": "The cluster's inventory is out of date."
+    "clusterRowStale": "The cluster's inventory is out of date.",
+    "noActions": {
+      "windowsOllamaOnly": "Windows host: only Ollama models can be controlled",
+      "engineNoLifecycle": "Engine doesn't support load/unload",
+      "noLaunchProfile": "Read-only: no launch profile registered",
+      "notInThisState": "No action applies in this state"
+    }
   },
   "table": {
     "model": "Model",

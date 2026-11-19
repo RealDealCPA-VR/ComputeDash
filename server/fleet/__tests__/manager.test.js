@@ -259,13 +259,18 @@ test("smart-routing helpers: cached inventories, background refresh only while r
   manager.shutdown();
 });
 
-test("servingCount only comes from recent inventories", async () => {
+test("servingCount and servingModels only come from recent inventories (90 s window)", async () => {
   let t = 1_000_000;
   const { manager } = makeManager({ now: () => t });
+  assert.equal(manager.targets().targets[0].servingModels, null, "no inventory: unknown");
   await manager.inventory("node:spark1");
   assert.equal(manager.targets().targets[0].servingCount, 1);
-  t += 2 * 10_000 + 1;
-  assert.equal(manager.targets().targets[0].servingCount, null, "an inventory older than 2x the TTL counts as absent");
+  assert.deepEqual(manager.targets().targets[0].servingModels, ["llama3.1:8b"]);
+  t += 89_999;
+  assert.equal(manager.targets().targets[0].servingCount, 1, "still within the background cadence window");
+  t += 1;
+  assert.equal(manager.targets().targets[0].servingCount, null, "an inventory 90 s old counts as absent");
+  assert.equal(manager.targets().targets[0].servingModels, null);
 });
 
 test("runtimes carry how their endpoint was reached", async () => {
@@ -290,4 +295,296 @@ test("operations read fresh launcher statuses; inventory reads may use the share
   const cached = await manager._launchersApi().statuses({ id: "spark1" }, [{ id: "qwen" }]);
   assert.deepEqual(cached, { qwen: "running" });
   assert.equal(cachedCalls.length, 1);
+});
+
+// ─── reliability: cache generations, single collection per target, tunnels, background ────
+
+function deferred() {
+  let resolve;
+  let reject;
+  const promise = new Promise((res, rej) => {
+    resolve = res;
+    reject = rej;
+  });
+  return { promise, resolve, reject };
+}
+
+/** Replace the manager's collector with controllable collections. */
+function controlledCollect(manager) {
+  const collects = [];
+  manager._collect = (targetId, opts) => {
+    const d = deferred();
+    collects.push({ targetId, opts, ...d });
+    return d.promise;
+  };
+  return collects;
+}
+
+const fakeInv = (tag, extra = {}) => ({
+  targetId: "node:spark1",
+  collectedAt: 1,
+  reachable: true,
+  runtimes: [],
+  models: [{ modelKey: `ollama|11434|${tag}`, modelId: tag, label: tag, engine: "ollama", port: 11434, state: "serving", sources: ["api"], endpoint: "http://10.0.0.1:11434" }],
+  clusterModels: [],
+  errors: [],
+  stale: false,
+  tag,
+  ...extra,
+});
+
+const tick = () => new Promise((r) => setImmediate(r));
+
+test("a refresh never joins a collection that started before it, and that older result is not cached", async () => {
+  const { manager } = makeManager();
+  const collects = controlledCollect(manager);
+  const plain = manager.inventory("node:spark1");
+  await tick();
+  assert.equal(collects.length, 1);
+  assert.equal(collects[0].opts.force, false);
+  const refreshA = manager.inventory("node:spark1", { refresh: true });
+  const refreshB = manager.inventory("node:spark1", { refresh: true });
+  await tick();
+  assert.equal(collects.length, 1, "the refresh waits instead of stacking a second collection");
+  collects[0].resolve(fakeInv("old"));
+  assert.equal((await plain).tag, "old", "the plain read gets the collection it joined");
+  await tick();
+  assert.equal(collects.length, 2, "then one collection for both refreshes");
+  assert.equal(collects[1].opts.force, true);
+  assert.equal(manager.cache.has("node:spark1"), false, "a result that started before the refresh is not cached");
+  collects[1].resolve(fakeInv("new"));
+  assert.equal((await refreshA).tag, "new");
+  assert.equal((await refreshB).tag, "new");
+  assert.equal(manager.cache.get("node:spark1").inv.tag, "new");
+  assert.equal((await manager.inventory("node:spark1")).tag, "new", "served from the cache");
+  assert.equal(collects.length, 2);
+});
+
+test("an invalidation during a pending collection keeps its result out of the cache", async () => {
+  const { manager } = makeManager();
+  const collects = controlledCollect(manager);
+  const first = manager.inventory("node:spark1");
+  await tick();
+  // An operation changes phase on the target (the runner's onChange hook).
+  manager.runner.host.onChange(["node:spark1"]);
+  collects[0].resolve(fakeInv("before-change"));
+  assert.equal((await first).tag, "before-change");
+  assert.equal(manager.cache.has("node:spark1"), false, "the pre-change result is not cached");
+  assert.equal(manager.targets().targets[0].servingCount, null, "and never feeds the target list");
+  const second = manager.inventory("node:spark1");
+  await tick();
+  assert.equal(collects.length, 2, "the next read collects again");
+  collects[1].resolve(fakeInv("after-change"));
+  assert.equal((await second).tag, "after-change");
+  assert.equal(manager.cache.get("node:spark1").inv.tag, "after-change");
+});
+
+test("a hung collection times out for callers but stays pending: no second collection stacks on it", async () => {
+  const { manager } = makeManager({ collectTimeoutMs: 40 });
+  const collects = controlledCollect(manager);
+  const a = await manager.inventory("node:spark1");
+  assert.equal(a.reachable, null);
+  assert.match(a.errors[0], /timed out/);
+  assert.equal(collects.length, 1);
+  const b = await manager.inventory("node:spark1");
+  assert.match(b.errors[0], /timed out/, "answered at once with the timeout");
+  const c = await manager.inventory("node:spark1", { refresh: true });
+  assert.match(c.errors[0], /timed out/, "a refresh does not stack on a hung unit either");
+  assert.equal(collects.length, 1, "still one collection in flight");
+  collects[0].resolve(fakeInv("late"));
+  await tick();
+  assert.equal(manager.pending.has("node:spark1"), false, "the entry goes once the collection settles");
+  assert.equal(manager.cache.has("node:spark1"), false, "the refresh bumped the generation: the late result is not cached");
+  const d = manager.inventory("node:spark1");
+  await tick();
+  assert.equal(collects.length, 2, "a new collection starts once the hung one settled");
+  collects[1].resolve(fakeInv("next"));
+  assert.equal((await d).tag, "next");
+});
+
+test("a late result of a timed-out collection is cached when nothing invalidated it", async () => {
+  const { manager } = makeManager({ collectTimeoutMs: 40 });
+  const collects = controlledCollect(manager);
+  const a = await manager.inventory("node:spark1");
+  assert.match(a.errors[0], /timed out/);
+  collects[0].resolve(fakeInv("late"));
+  await tick();
+  assert.equal((await manager.inventory("node:spark1")).tag, "late");
+  assert.equal(collects.length, 1);
+});
+
+test("a hung refresh with a cached inventory serves the cache as stale", async () => {
+  const { manager } = makeManager({ collectTimeoutMs: 40 });
+  const collects = controlledCollect(manager);
+  const p = manager.inventory("node:spark1");
+  await tick();
+  collects[0].resolve(fakeInv("cached"));
+  await p;
+  const out = await manager.inventory("node:spark1", { refresh: true });
+  assert.equal(out.stale, true);
+  assert.equal(out.tag, "cached");
+  assert.ok(out.errors.some((e) => /timed out/.test(e)));
+});
+
+test("consecutive collections reuse one pooled SSH tunnel; the idle TTL and shutdown close it", async () => {
+  let t = 1_000_000;
+  const tunnels = { opened: 0, closed: 0, opts: [] };
+  const { manager } = makeManager({
+    now: () => t,
+    resolveTarget: async (unit, port, opts) => {
+      tunnels.opened += 1;
+      tunnels.opts.push(opts);
+      return { host: unit.lanIp, port, via: "ssh-tunnel", close: () => (tunnels.closed += 1) };
+    },
+    tunnelPool: { idleMs: 60, isAlive: async () => true },
+  });
+  const a = await manager.inventory("node:spark1");
+  assert.equal(a.runtimes.find((r) => r.port === 11434).via, "ssh-tunnel");
+  t += 10_001; // past the inventory TTL
+  await manager.inventory("node:spark1");
+  t += 10_001;
+  await manager.inventory("node:spark1");
+  assert.equal(tunnels.opened, 1, "three collections, one SSH process");
+  assert.equal(tunnels.closed, 0);
+  assert.equal(tunnels.opts[0].apiKey, "secret-key");
+  await new Promise((r) => setTimeout(r, 120));
+  assert.equal(tunnels.closed, 1, "closed after the idle TTL");
+  t += 10_001;
+  await manager.inventory("node:spark1");
+  assert.equal(tunnels.opened, 2);
+  assert.equal(tunnels.opts[1].skipDirect, true, "a known tunnel-only port is reopened without the direct probe");
+  manager.shutdown();
+  assert.equal(tunnels.closed, 2, "shutdown closes the pooled tunnel");
+});
+
+test("a port that answers neither way backs off; an operation's fresh check still tries", async () => {
+  let t = 1_000_000;
+  let calls = 0;
+  const { manager, registry } = makeManager({
+    now: () => t,
+    resolveTarget: async () => {
+      calls += 1;
+      throw new Error("not reachable over the LAN, and SSH tunnel failed");
+    },
+    tunnelPool: { backoffMinMs: 30_000 },
+  });
+  const a = await manager.inventory("node:spark1");
+  assert.ok(a.errors.some((e) => /SSH tunnel failed/.test(e)));
+  assert.equal(calls, 1);
+  t += 10_001;
+  const b = await manager.inventory("node:spark1");
+  assert.ok(b.errors.some((e) => /next attempt in/.test(e)), "backing off: no new probe or tunnel");
+  assert.equal(calls, 1);
+  // An operation's scope is fresh: it ignores the backoff.
+  const scope = manager.runner.host.openScope();
+  await assert.rejects(scope.resolveBaseUrl(registry.getSpark("spark1"), 11434));
+  scope.close();
+  assert.equal(calls, 2);
+});
+
+/** Advance mocked timers and let a background pass (fake fetches) finish. */
+async function advance(t, manager, ms) {
+  t.mock.timers.tick(ms);
+  for (let i = 0; i < 100 && manager.backgroundRunning; i += 1) await tick();
+  await tick();
+}
+
+test("background refresh runs at the view cadence while the fleet API is read, even with routing off", async (t) => {
+  t.mock.timers.enable({ apis: ["setInterval", "Date"], now: 5_000_000 });
+  const { manager, ollama } = makeManager({ now: () => Date.now(), backgroundRefreshMs: 30_000 });
+  t.after(() => manager.shutdown());
+  const passes = () => ollama.fetchImpl.calls.filter((c) => c.url.endsWith("/api/ps")).length;
+  await advance(t, manager, 30_000);
+  assert.equal(passes(), 0, "nobody reads the API and routing is off: no background work");
+  manager.noteRead();
+  await advance(t, manager, 30_000);
+  assert.equal(passes(), 1, "a pass runs while the API is being read");
+  assert.equal(manager.targets().targets[0].servingCount, 1, "so the target list knows what is serving");
+  await advance(t, manager, 30_000);
+  assert.equal(passes(), 1, "30 s later: not yet (60 s cadence without routing)");
+  await advance(t, manager, 30_000);
+  assert.equal(passes(), 2);
+  assert.deepEqual(manager.targets().targets[0].servingModels, ["llama3.1:8b"]);
+  // Reads stopped at the first noteRead: passes stop 2 minutes after it.
+  await advance(t, manager, 60_000);
+  assert.equal(passes(), 2, "the last read was 150 s ago");
+  await advance(t, manager, 60_000);
+  assert.equal(passes(), 2);
+  assert.equal(manager.targets().targets[0].servingCount, null, "and the counts go back to unknown");
+});
+
+test("background refresh keeps its 30 s cadence while smart routing is on", async (t) => {
+  t.mock.timers.enable({ apis: ["setInterval", "Date"], now: 5_000_000 });
+  const { manager, ollama } = makeManager({
+    now: () => Date.now(),
+    backgroundRefreshMs: 30_000,
+    getSettings: () => ({ fleetModelsEnabled: true, smartRoutingEnabled: true }),
+  });
+  t.after(() => manager.shutdown());
+  const passes = () => ollama.fetchImpl.calls.filter((c) => c.url.endsWith("/api/ps")).length;
+  for (let i = 1; i <= 3; i += 1) {
+    await advance(t, manager, 30_000);
+    assert.equal(passes(), i);
+  }
+});
+
+test("operations list: running and recent ones newest first; activeOperationId on the target and its cluster", async () => {
+  let t = 1_000_000;
+  const { manager, ollama } = makeManager({ now: () => t });
+  const created = manager.createCluster({ id: "duo", name: "Duo", kind: "distributed", memberIds: ["spark1", "spark2"], headId: "spark1", endpoint: { host: null, port: 11434 }, engine: "ollama" });
+  assert.equal(created.ok, true, created.error);
+  ollama.loaded.clear();
+  // phi3 never becomes ready: the operation keeps running while we look.
+  manager.fetchImpl = fakeFetch({
+    "GET http://10.0.0.1:11434/api/tags": { body: { models: [{ name: "phi3:mini" }] } },
+    "GET http://10.0.0.1:11434/api/ps": { body: { models: [] } },
+    "POST http://10.0.0.1:11434/api/generate": { body: {} },
+  });
+  const res = manager.startOperation("node:spark1", { action: "start", modelKey: "ollama|11434|phi3:mini" });
+  assert.equal(res.ok, true, res.error);
+  const id = res.operation.id;
+  const byId = Object.fromEntries(manager.targets().targets.map((x) => [x.targetId, x]));
+  assert.equal(byId["node:spark1"].activeOperationId, id);
+  assert.equal(byId["node:spark1"].busy, true);
+  assert.equal(byId["cluster:duo"].activeOperationId, id, "a member node's operation shows on its cluster");
+  assert.equal(byId["cluster:duo"].busy, true, "and blocks it, as isBusy() says");
+  assert.equal(manager.isBusy("cluster:duo"), true);
+  assert.equal(byId["node:spark2"].activeOperationId, null);
+  assert.equal(byId["node:spark2"].busy, false);
+  assert.deepEqual(manager.listOperations({ activeOnly: true }).operations.map((o) => o.id), [id]);
+  assert.deepEqual(manager.listOperations().operations[0], manager.readOperation(id).operation, "same shape as GET by id");
+  manager.shutdown();
+  const read = await settle(manager, id);
+  assert.notEqual(read.operation.status, "running");
+  assert.equal(manager.targets().targets[0].activeOperationId, null);
+  assert.deepEqual(manager.listOperations({ activeOnly: true }).operations, []);
+  assert.deepEqual(manager.listOperations().operations.map((o) => o.id), [id], "finished recently");
+  t += 10 * 60_000 + 1;
+  assert.deepEqual(manager.listOperations().operations, [], "older than 10 minutes");
+});
+
+test("each manager keeps its own memory of served models", async () => {
+  const a = makeManager({ servedKeys: undefined }).manager;
+  const b = makeManager({ servedKeys: undefined }).manager;
+  await a.inventory("node:spark1");
+  assert.ok(a.servedKeys.size > 0);
+  assert.equal(b.servedKeys.size, 0, "nothing leaks into another manager");
+  assert.notEqual(a.servedKeys, b.servedKeys);
+});
+
+test("an abandoned collection that settles after its replacement never overwrites the cache", async () => {
+  let t = 1_000_000;
+  const { manager } = makeManager({ now: () => t, collectTimeoutMs: 40 });
+  const collects = controlledCollect(manager);
+  const a = await manager.inventory("node:spark1");
+  assert.match(a.errors[0], /timed out/);
+  t += 5 * 40 + 1; // past the abandon horizon
+  const b = manager.inventory("node:spark1");
+  await tick();
+  assert.equal(collects.length, 2, "a replacement starts");
+  collects[1].resolve(fakeInv("new"));
+  assert.equal((await b).tag, "new");
+  collects[0].resolve(fakeInv("old"));
+  await tick();
+  assert.equal(manager.cache.get("node:spark1").inv.tag, "new", "the abandoned result is dropped");
 });

@@ -24,7 +24,9 @@ import {
   validateDecodeContextBudget,
   validatePrefillBudget,
 } from "./validate.js";
-import { authStatus, authorizeUpgrade, configuredToken, createAuthMiddleware, createHostGuardMiddleware, isLoopbackBind, setTailscaleName } from "./auth.js";
+import { authorizeUpgrade, configuredToken, createAuthMiddleware, createAuthStatusHandler, isLoopbackBind, setTailscaleName } from "./auth.js";
+import { createSecurityHeadersMiddleware } from "./securityHeaders.js";
+import { startWsHeartbeat } from "./wsHeartbeat.js";
 import { inspectHealth } from "./health.js";
 import { getSettings, updateSettings, loadSettings } from "./settings.js";
 import { MqttPublisher } from "./mqtt/MqttPublisher.js";
@@ -112,11 +114,11 @@ const __dirname = path.dirname(__filename);
 const ROOT = path.resolve(__dirname, "..");
 const SERVER_VERSION = readServerVersion(ROOT);
 
-// Default to loopback. A non-loopback bind without SPARKDASH_TOKEN stays OPEN —
-// anyone who can reach the port can mutate settings and power units — unless
-// SPARKDASH_ALLOW_OPEN_REMOTE=0, which makes startup fail closed instead. Prefer
-// SPARKDASH_TOKEN, an SSH tunnel, an authenticated reverse proxy, or Tailscale
-// Serve (docs/REMOTE-ACCESS.md).
+// Default to loopback. A non-loopback bind without SPARKDASH_TOKEN refuses to
+// start unless SPARKDASH_ALLOW_OPEN_REMOTE=1 explicitly opens it to anyone who
+// can reach the port. Prefer SPARKDASH_TOKEN, an SSH tunnel, an authenticated
+// reverse proxy, or Tailscale Serve (docs/REMOTE-ACCESS.md). Without a token,
+// changes are accepted only from the dashboard machine itself (server/auth.js).
 const BIND_HOST = process.env.BIND_HOST || "127.0.0.1";
 const PORT = parseInt(process.env.PORT || "5555", 10);
 const LLM_PORT = parseInt(process.env.LLM_PORT || "8888", 10);
@@ -559,6 +561,17 @@ const alertsRuntime = createAlertsRuntime({
 // ─── Express app ─────────────────────────────────────────
 const app = express();
 const server = createServer(app);
+app.disable("x-powered-by");
+// CSP, nosniff, Referrer-Policy and framing rules on every response, refusals included.
+// SPARKDASH_FRAME_ANCESTORS lets a Home Assistant dashboard (or similar) embed the UI.
+app.use(
+  createSecurityHeadersMiddleware({
+    indexHtmlPath: () => {
+      const dir = resolveFrontendDir(ROOT);
+      return dir ? path.join(dir, "index.html") : null;
+    },
+  })
+);
 
 // The smart-routing proxy carries whole chat / embeddings requests; the default 100 kB
 // JSON limit would turn long prompts into 413s. Nothing is buffered before the caller is
@@ -584,13 +597,14 @@ function fleetProxyGate(req, res, next) {
   next();
 }
 app.use("/api/fleet/v1", createAuthMiddleware(), fleetProxyGate, express.json({ limit: "4mb" }));
-app.use(express.json());
 // Registered ahead of the auth middleware: a remote browser holding no token
-// (or a stale one) must still be able to learn that it needs one.
-app.get("/api/auth/status", createHostGuardMiddleware(), (req, res) => {
-  res.json(authStatus(req));
-});
+// (or a stale one) must still be able to learn that it needs one. Host-guarded
+// and covered by the failed-authentication limiter; it reads no body.
+app.get("/api/auth/status", createAuthStatusHandler());
 app.use(createAuthMiddleware());
+// Bodies are parsed only after the Host/Origin checks and authentication, so an
+// unauthenticated caller never gets a JSON body buffered and parsed.
+app.use(express.json());
 occupancy.register(app);
 
 /** Fleet event log, newest first. Query: limit, sparkId, sinceId. */
@@ -794,7 +808,9 @@ app.patch("/api/sparks/:id", (req, res) => {
     // sparks.json writes. patchSpark() arms the reconcile on the llmPorts
     // own-property (any shape — [] and the legacy scalar are applied by the
     // normalizer too) and syncs against the post-normalize ports.
-    const { spark } = registry.patchSpark(req.params.id, body);
+    // Moving the unit to another SSH host/user/port or LLM endpoint drops the stored
+    // SSH password / LLM API keys unless re-supplied; credentialsCleared tells the UI.
+    const { spark, credentialsCleared } = registry.patchSpark(req.params.id, body);
     // Restart monitor so collectors pick up host/auth/isLocal changes
     stopMonitor(req.params.id);
     startMonitor(spark);
@@ -802,6 +818,7 @@ app.patch("/api/sparks/:id", (req, res) => {
       success: true,
       spark: registry.toPublic(spark),
       hasPassword: registry.hasPassword(req.params.id),
+      credentialsCleared,
     });
   } catch (err) {
     res.status(err.status || 400).json({ error: err.message });
@@ -2648,7 +2665,7 @@ fleetModels = new FleetModelManager({
   recordEvent,
   getSettings,
   // Direct LAN / loopback first, else an SSH tunnel; the manager closes every tunnel it opens.
-  resolveTarget: (unit, port, opts) => resolveLlmHttpTarget(unit, port, { apiKey: opts?.apiKey ?? null }),
+  resolveTarget: (unit, port, opts) => resolveLlmHttpTarget(unit, port, { apiKey: opts?.apiKey ?? null, skipDirect: opts?.skipDirect === true }),
 });
 registry.onChange((action, spark) => fleetModels?.onRegistryChange(action, spark));
 const allowFleetRead = createRateLimiter(240, 60_000);
@@ -2757,7 +2774,10 @@ app.use((req, res, next) => {
 });
 
 // ─── SPA fallback (Express v5 wildcard) ───────────────────
-app.get("*splat", (_req, res) => {
+app.get("*splat", (req, res) => {
+  // A missing hashed asset (a chunk from an older build) is a 404, not the SPA shell: answered
+  // with index.html it becomes a MIME error in the browser and a poisoned service-worker cache.
+  if (/^\/assets\//i.test(req.path)) return res.status(404).type("text").send("Not found");
   const dir = resolveFrontendDir(ROOT);
   if (!dir) {
     return res.status(503).type("text").send(FRONTEND_MISSING_MESSAGE);
@@ -2787,6 +2807,8 @@ const wss = new WebSocketServer({
 wss.on("error", (err) => {
   console.error("[ws] server error:", err?.message);
 });
+// Ping every 30 s; a client that did not pong since the previous ping is terminated.
+const stopWsHeartbeat = startWsHeartbeat(wss, { intervalMs: 30_000 });
 wss.on("connection", (ws) => {
   console.log("[ws] client connected");
   // A malformed frame or reset socket emits "error" on the socket; without a
@@ -3031,7 +3053,7 @@ if (!startupPreflight.fatal) {
     const { authMode } = inspectHealth(BIND_HOST);
     console.log(`[sparkDash] bind=${BIND_HOST} auth=${authMode}`);
     if (authMode === "open-remote") {
-      console.warn("[sparkDash] WARNING: remote bind without SPARKDASH_TOKEN is OPEN — anyone who can reach this port can change settings and power units off. Set SPARKDASH_TOKEN to require a token.");
+      console.warn("[sparkDash] WARNING: remote bind without SPARKDASH_TOKEN is OPEN (SPARKDASH_ALLOW_OPEN_REMOTE=1) — anyone who can reach this port can change settings and power units off. Set SPARKDASH_TOKEN to require a token.");
     }
     startAllMonitors();
     alertsRuntime.start();
@@ -3041,6 +3063,13 @@ if (!startupPreflight.fatal) {
     llmTokenRuntime.start();
   }
 } else {
+  if (startupPreflight.authMode === "required-missing") {
+    console.error(
+      `[sparkDash] refusing to start: BIND_HOST=${BIND_HOST} is reachable from other machines and no SPARKDASH_TOKEN is set. ` +
+        "Do one of: set SPARKDASH_TOKEN (run `npm run setup` to generate one); or set BIND_HOST=127.0.0.1 and reach the dashboard through Tailscale Serve, an SSH tunnel or a reverse proxy; " +
+        "or, only on a network you fully trust, set SPARKDASH_ALLOW_OPEN_REMOTE=1 to let anyone who can reach the port read and change everything."
+    );
+  }
   process.exitCode = 1;
 }
 
@@ -3123,6 +3152,7 @@ async function shutdown(signal) {
     console.error("[sparkDash] error during shutdown:", err.message);
   }
   // Tell WS clients the server is going away, then close the server.
+  stopWsHeartbeat();
   try {
     wss.clients.forEach((c) => {
       try {

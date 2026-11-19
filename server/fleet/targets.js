@@ -24,7 +24,11 @@ import { capabilitiesFor } from "./adapters/base.js";
  * @property {"distributed"|"group"|null} clusterKind
  * @property {{ distributedControl: boolean, lifecycle: boolean }} capabilities
  * @property {number|null} servingCount
- * @property {boolean} busy
+ * @property {string[]|null} servingModels  modelIds of the de-duplicated serving models (the ones
+ *   servingCount counts), alphabetical; null exactly when servingCount is null
+ * @property {boolean} busy   an operation holds this target (a node: also a cluster operation on a
+ *   cluster it belongs to; a cluster: also an operation on a member node)
+ * @property {string|null} activeOperationId  id of that operation, or null
  */
 
 const MB = 1024 * 1024;
@@ -135,16 +139,33 @@ function nodeHealth(snap, online) {
  * @param {object[]} args.units  registry public units, in registry order
  * @param {FleetCluster[]} [args.clusters]
  * @param {Map<string, object>} [args.snapshots]  unitId → SparkMonitor snapshot
- * @param {Set<string>|string[]} [args.busyTargetIds]
+ * @param {Set<string>|string[]} [args.busyTargetIds]  locked target ids (a cluster operation also
+ *   locks its member nodes)
+ * @param {Map<string, string>} [args.activeOperations]  lock id → running operation id
  * @param {Map<string, object>|Record<string, object>} [args.inventories]  targetId → FleetInventory.
  *   servingCount comes only from these; without one it is null. The monitor's /v1/models list is
  *   never used: on multi-model engines (Ollama, LM Studio) it is the installed catalog.
  * @returns {FleetTarget[]}
  */
-export function buildTargets({ units, clusters = [], snapshots = new Map(), busyTargetIds = [], inventories = new Map() }) {
+export function buildTargets({
+  units,
+  clusters = [],
+  snapshots = new Map(),
+  busyTargetIds = [],
+  activeOperations = new Map(),
+  inventories = new Map(),
+}) {
   const unitList = Array.isArray(units) ? units.filter((u) => u && typeof u.id === "string") : [];
   const clusterList = Array.isArray(clusters) ? clusters : [];
   const busy = busyTargetIds instanceof Set ? busyTargetIds : new Set(Array.isArray(busyTargetIds) ? busyTargetIds : []);
+  const ops = activeOperations instanceof Map ? activeOperations : new Map();
+  /** First lock id (in order) held by an operation: [busy, operation id or null]. */
+  const lockOf = (ids) => {
+    for (const id of ids) {
+      if (busy.has(id) || ops.has(id)) return { busy: true, opId: ops.get(id) ?? null };
+    }
+    return { busy: false, opId: null };
+  };
   const snapOf = (id) => (snapshots instanceof Map ? snapshots.get(id) : snapshots?.[id]);
   const unitById = new Map(unitList.map((u) => [u.id, u]));
   const invOf = (targetId) => (inventories instanceof Map ? inventories.get(targetId) : inventories?.[targetId]);
@@ -158,7 +179,9 @@ export function buildTargets({ units, clusters = [], snapshots = new Map(), busy
     const distributed = mine.filter((c) => c.kind === "distributed");
     const platform = PLATFORMS.has(unit.platform) ? unit.platform : PLATFORMS.has(snap?.platform) ? snap.platform : null;
     const llm = Array.isArray(snap?.metrics?.llm) ? snap.metrics.llm : null;
-    const servingCount = online === false ? null : inventoryServingCount(invOf(nodeTargetId(unit.id)));
+    const serving = online === false ? null : inventoryServing(invOf(nodeTargetId(unit.id)));
+    // A cluster operation also locks every member node, so the node's own lock covers it.
+    const lock = lockOf([nodeTargetId(unit.id)]);
     const lifecycle = platform !== "windows" || (llm ?? []).some((e) => httpLifecycle(e?.backend));
     out.push({
       targetId: nodeTargetId(unit.id),
@@ -174,8 +197,10 @@ export function buildTargets({ units, clusters = [], snapshots = new Map(), busy
       clusterIds: mine.map((c) => c.id),
       clusterKind: distributed.length ? "distributed" : mine.length ? "group" : null,
       capabilities: { distributedControl: false, lifecycle },
-      servingCount,
-      busy: busy.has(nodeTargetId(unit.id)),
+      servingCount: serving ? serving.count : null,
+      servingModels: serving ? serving.models : null,
+      busy: lock.busy,
+      activeOperationId: lock.opId,
     });
   }
 
@@ -219,8 +244,9 @@ export function buildTargets({ units, clusters = [], snapshots = new Map(), busy
     const label = headHw?.label ? `${c.memberIds.length}× ${headHw.label}` : null;
     const platforms = new Set(members.map((u) => (PLATFORMS.has(u.platform) ? u.platform : null)));
     // A group has no inference instance of its own: null, so nothing is counted twice.
-    const servingCount =
-      c.kind === "distributed" && headOnline !== false ? inventoryServingCount(invOf(clusterTargetId(c.id))) : null;
+    const serving = c.kind === "distributed" && headOnline !== false ? inventoryServing(invOf(clusterTargetId(c.id))) : null;
+    // The cluster's own operation first, then one on a member node (which blocks the cluster too).
+    const lock = lockOf([clusterTargetId(c.id), ...c.memberIds.map(nodeTargetId)]);
     out.push({
       targetId: clusterTargetId(c.id),
       kind: "cluster",
@@ -235,8 +261,10 @@ export function buildTargets({ units, clusters = [], snapshots = new Map(), busy
       clusterIds: [],
       clusterKind: c.kind,
       capabilities: clusterCapabilities(c),
-      servingCount,
-      busy: busy.has(clusterTargetId(c.id)),
+      servingCount: serving ? serving.count : null,
+      servingModels: serving ? serving.models : null,
+      busy: lock.busy,
+      activeOperationId: lock.opId,
     });
   }
   return out;
@@ -304,18 +332,33 @@ function servingIdentity(inv, m) {
  * @returns {number}
  */
 export function countServing(inventories) {
-  const seen = new Set();
-  for (const inv of Array.isArray(inventories) ? inventories : []) {
-    for (const m of inv?.models ?? []) if (m?.state === "serving") seen.add(servingIdentity(inv, m));
-  }
-  return seen.size;
+  return servingByIdentity(inventories).size;
 }
 
-/** A target's serving count from its inventory; null when unknown (no inventory, unreachable, stale). */
-function inventoryServingCount(inv) {
+/** identity → modelId of every serving model, de-duplicated as countServing does. */
+function servingByIdentity(inventories) {
+  const seen = new Map();
+  for (const inv of Array.isArray(inventories) ? inventories : []) {
+    for (const m of inv?.models ?? []) {
+      if (m?.state !== "serving") continue;
+      const id = servingIdentity(inv, m);
+      if (!seen.has(id)) seen.set(id, m.modelId);
+    }
+  }
+  return seen;
+}
+
+/**
+ * A target's serving models from its inventory: the de-duplicated count and their modelIds
+ * (alphabetical; one entry per counted model, so `models.length === count`). null when unknown
+ * (no inventory, unreachable, stale, or a failed runtime).
+ * @returns {{ count: number, models: string[] }|null}
+ */
+function inventoryServing(inv) {
   if (!inv || !Array.isArray(inv.models) || inv.reachable === false || inv.stale === true) return null;
   // A runtime that failed makes the count a lower bound: report unknown, not a partial number.
   // (A port where nothing was identified, engine "unknown", is not a failed source.)
   if (Array.isArray(inv.runtimes) && inv.runtimes.some((r) => r && r.engine !== "unknown" && (r.reachable === false || r.error))) return null;
-  return countServing([inv]);
+  const models = [...servingByIdentity([inv]).values()].map(String).sort((a, b) => a.localeCompare(b));
+  return { count: models.length, models };
 }

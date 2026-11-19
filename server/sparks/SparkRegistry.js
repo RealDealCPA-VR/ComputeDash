@@ -131,6 +131,18 @@ export class SparkRegistry {
 
   /** Update an existing Spark by ID. Does not allow changing `id`. */
   updateSpark(id, updates) {
+    return this._applyUpdate(id, updates).spark;
+  }
+
+  /**
+   * updateSpark, also reporting which stored credentials the update dropped.
+   * Secrets belong to the target they were entered for: moving a unit to another
+   * SSH host, user or port drops its stored SSH password unless the same update
+   * supplies a new one, and moving its LLM endpoint drops the per-port LLM API
+   * keys, which would otherwise be sent to the new host.
+   * @returns {{ spark: object, credentialsCleared: ("sshPassword" | "llmApiKeys")[] }}
+   */
+  _applyUpdate(id, updates) {
     const idx = this._sparks.findIndex((s) => s.id === id);
     if (idx === -1) throw new Error(`Spark ${id} not found`);
 
@@ -182,14 +194,24 @@ export class SparkRegistry {
     nextSparks[idx] = this._normalizeConfig(updated);
     // Secrets belong to the host they were entered for. LLM keys also reach a
     // remote unit's SSH host, through the bench tunnel.
-    const sshTarget = (s) => [s.isLocal, s.ssh.user, s.ssh.host || s.lanIp].join(" ");
+    const sshTarget = (s) => [s.isLocal, s.ssh.user, s.ssh.host || s.lanIp, s.ssh.port ?? 22].join(" ");
     const llmTarget = (s) => [llmProbeHost(s), !s.isLocal && (s.ssh.host || s.lanIp)].join(" ");
     const prevPasswords = this._passwords;
     const prevLlmApiKeys = this._llmApiKeys;
+    /** @type {("sshPassword" | "llmApiKeys")[]} */
+    const credentialsCleared = [];
     this._save(nextSparks);
     try {
-      if (sshTarget(nextSparks[idx]) !== sshTarget(prev)) this._storePassword(id, "");
-      if (llmTarget(nextSparks[idx]) !== llmTarget(prev)) this.pruneLlmApiKeys(id, []);
+      if (sshTarget(nextSparks[idx]) !== sshTarget(prev)) {
+        const hadPassword = this._passwords.has(id);
+        this._storePassword(id, "");
+        const resupplied = hasPasswordUpdate && passwordUpdate != null && passwordUpdate !== "";
+        if (hadPassword && !resupplied) credentialsCleared.push("sshPassword");
+      }
+      if (llmTarget(nextSparks[idx]) !== llmTarget(prev)) {
+        if (this.llmApiKeyPorts(id).length > 0) credentialsCleared.push("llmApiKeys");
+        this.pruneLlmApiKeys(id, []);
+      }
       if (hasPasswordUpdate) this._storePassword(id, passwordUpdate);
     } catch (err) {
       this._save(this._sparks);
@@ -203,7 +225,7 @@ export class SparkRegistry {
     }
     this._sparks = nextSparks;
     this._emit("update", this._withSecrets(this._sparks[idx]));
-    return this._withSecrets(this._sparks[idx]);
+    return { spark: this._withSecrets(this._sparks[idx]), credentialsCleared };
   }
 
   /** Remove a Spark by ID. Returns removed Spark or null. */
@@ -554,7 +576,7 @@ export class SparkRegistry {
    * same rename the persisted record does, not the raw request body.
    * @param {string} id
    * @param {object} updates PATCH body
-   * @returns {{ spark: object, llmPortsSynced: boolean }}
+   * @returns {{ spark: object, llmPortsSynced: boolean, credentialsCleared: ("sshPassword" | "llmApiKeys")[] }}
    */
   patchSpark(id, updates) {
     const body = updates || {};
@@ -565,12 +587,12 @@ export class SparkRegistry {
       if (!existing) throw new Error(`Spark ${id} not found`);
       prevPorts = Array.isArray(existing.llmPorts) ? [...existing.llmPorts] : [];
     }
-    const updated = this.updateSpark(id, body);
+    const { spark: updated, credentialsCleared } = this._applyUpdate(id, body);
     const llmPortsSynced = armed && Array.isArray(updated.llmPorts);
     if (llmPortsSynced) {
       this.syncLlmApiKeysToPorts(id, prevPorts, updated.llmPorts);
     }
-    return { spark: llmPortsSynced ? this.getSpark(id) : updated, llmPortsSynced };
+    return { spark: llmPortsSynced ? this.getSpark(id) : updated, llmPortsSynced, credentialsCleared };
   }
 
   syncLlmApiKeysToPorts(id, prevPorts, nextPorts) {

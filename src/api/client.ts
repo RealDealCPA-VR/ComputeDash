@@ -224,7 +224,12 @@ export function addSpark(config: SparkConfig): Promise<{ success: boolean; spark
 export function updateSpark(
   id: string,
   patch: Partial<SparkConfig>
-): Promise<{ success: boolean; spark: SparkConfig }> {
+): Promise<{
+  success: boolean;
+  spark: SparkConfig;
+  /** Secrets the server dropped because the SSH or LLM host changed, e.g. "sshPassword", "llmApiKeys". */
+  credentialsCleared?: string[];
+}> {
   return apiFetch(`/api/sparks/${id}`, {
     method: "PATCH",
     body: JSON.stringify(patch),

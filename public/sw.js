@@ -3,7 +3,8 @@
 // responses. We only cache the app shell so the installed PWA opens instantly
 // and still renders (with a "offline" state from the app itself) when the
 // network to the server blips.
-const CACHE = "sparkdash-shell-v1";
+// v2: drops v1 caches, which could hold index.html under a missing asset's URL.
+const CACHE = "sparkdash-shell-v2";
 const SHELL = ["/", "/index.html", "/manifest.webmanifest"];
 
 self.addEventListener("install", (event) => {
@@ -45,7 +46,9 @@ self.addEventListener("fetch", (event) => {
         (hit) =>
           hit ||
           fetch(req).then((res) => {
-            if (res.ok) {
+            // Never cache an HTML page under an asset URL (an older server answered a missing
+            // chunk with index.html).
+            if (res.ok && !(res.headers.get("content-type") || "").includes("text/html")) {
               const copy = res.clone();
               caches.open(CACHE).then((cache) => cache.put(req, copy));
             }

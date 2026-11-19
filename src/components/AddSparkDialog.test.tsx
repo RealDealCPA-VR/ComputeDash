@@ -34,7 +34,10 @@ describe("AddSparkDialog keyboard contract", () => {
       value: { protocol: "http:", host: "localhost:5555" },
     });
   });
-  afterEach(() => vi.unstubAllGlobals());
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    localStorage.clear();
+  });
 
   it("is a modal dialog that closes on Escape", () => {
     const onClose = vi.fn();
@@ -75,6 +78,11 @@ describe("AddSparkDialog keyboard contract", () => {
     expect(next1?.disabled).toBe(true);
     setValue(lanIp, "192.168.1.50");
     setValue(port, "2222");
+    // No author's username baked in: the field starts empty with an example placeholder.
+    const user = document.getElementById("add-spark-ssh-user") as HTMLInputElement;
+    expect(user.value).toBe("");
+    expect(user.placeholder).toBe("root if left empty");
+    setValue(user, "ubuntu");
     await click(/^Next: Role/);
 
     // Step 2: Role (name is required)
@@ -95,9 +103,34 @@ describe("AddSparkDialog keyboard contract", () => {
         lanIp: "192.168.1.50",
         role: "head",
         hermesMonitoring: true,
-        ssh: expect.objectContaining({ user: "zurih", port: 2222 }),
+        ssh: expect.objectContaining({ user: "ubuntu", port: 2222 }),
       })
     );
+    // The user that worked is remembered for the next unit.
+    expect(localStorage.getItem("sparkdashLastSshUser")).toBe("ubuntu");
+  });
+
+  it("pre-fills the SSH user from the last successful add", () => {
+    localStorage.setItem("sparkdashLastSshUser", "pi");
+    render(<AddSparkDialog open onClose={() => {}} onAdded={() => {}} />);
+    expect((document.getElementById("add-spark-ssh-user") as HTMLInputElement).value).toBe("pi");
+  });
+
+  it("labels every unit type correctly (Mac is not shown as Windows)", () => {
+    render(<AddSparkDialog open onClose={() => {}} onAdded={() => {}} />);
+    const select = document.getElementById("add-spark-kind") as HTMLSelectElement;
+    const labels = Object.fromEntries(Array.from(select.options).map((o) => [o.value, o.textContent]));
+    expect(labels.mac).toBe("Apple Silicon Mac (macOS over SSH, or via the Mac node agent)");
+    expect(labels.windows).toBe("Windows PC (NVIDIA GPU or AMD Strix Halo)");
+    expect(new Set(Object.values(labels)).size).toBe(4);
+  });
+
+  it("says why Next is disabled, in visible text the button points at", () => {
+    render(<AddSparkDialog open onClose={() => {}} onAdded={() => {}} />);
+    const next = Array.from(document.querySelectorAll("button")).find((b) => /^Next: Role/.test(b.textContent ?? ""))!;
+    expect(next.disabled).toBe(true);
+    const reason = document.getElementById(next.getAttribute("aria-describedby")!);
+    expect(reason?.textContent).toBe("Enter the LAN IP of the remote host.");
   });
 
   it("labels the final button after the chosen unit type", async () => {

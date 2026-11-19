@@ -55,7 +55,7 @@ test("startup preflight says plainly when a tokenless remote bind is left open",
   const warning = open.warnings.find((w) => w.includes("0.0.0.0"));
   assert.ok(warning, "expected an open-bind warning");
   assert.match(warning, /is open/);
-  assert.match(warning, /SPARKDASH_ALLOW_OPEN_REMOTE is unset or 1/);
+  assert.match(warning, /SPARKDASH_ALLOW_OPEN_REMOTE=1/);
   assert.match(warning, /SPARKDASH_TOKEN/);
 });
 

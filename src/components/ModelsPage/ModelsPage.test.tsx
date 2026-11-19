@@ -2,8 +2,11 @@ import { act } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { flush, render } from "../../testing/render";
 import * as client from "../../api/fleetClient";
-import { ModelsPage, orderTargets, TARGETS_BUSY_POLL_MS } from "./ModelsPage";
-import { BIG, DESK, DUO, MAC, SERVING, SMALL, SPARK1, SPARK2, makeInventory, makeModel, makeOperation } from "./fixtures";
+import { clearToken, onAuthRequired, setToken } from "../../api/authToken";
+import { ModelsPage, orderTargets, TARGETS_BUSY_POLL_MS, TARGETS_POLL_MS } from "./ModelsPage";
+import { INVENTORY_POLL_MS } from "./TargetModels";
+import { TOKEN_ENV_LINE, TOKEN_GENERATE_COMMAND } from "./TokenBanner";
+import { BIG, CAPS, DESK, DUO, MAC, SERVING, SMALL, SPARK1, SPARK2, makeInventory, makeModel, makeOperation, makeTarget } from "./fixtures";
 
 vi.mock("../../api/fleetClient", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../../api/fleetClient")>();
@@ -20,6 +23,7 @@ vi.mock("../../api/fleetClient", async (importOriginal) => {
     getInventory: vi.fn(),
     startOperation: vi.fn(),
     readOperation: vi.fn(),
+    listOperations: vi.fn(),
     cancelOperation: vi.fn(),
     getLogs: vi.fn(),
     listClusters: vi.fn(),
@@ -37,10 +41,14 @@ beforeEach(() => {
   vi.mocked(client.readOperation).mockImplementation(() => new Promise(() => {}));
   vi.mocked(client.getLogs).mockResolvedValue({ source: "launcher", lines: [{ seq: 1, text: "engine ready" }] });
   vi.mocked(client.listClusters).mockResolvedValue({ clusters: [], suggestions: [] });
+  vi.mocked(client.listOperations).mockResolvedValue({ operations: [] });
 });
 
 afterEach(() => {
   vi.clearAllMocks();
+  vi.unstubAllGlobals();
+  clearToken();
+  window.history.replaceState(null, "", "/");
 });
 
 const buttons = (root: ParentNode = document.body) => Array.from(root.querySelectorAll("button"));
@@ -56,8 +64,8 @@ async function click(el: HTMLElement) {
   await flush();
 }
 
-async function renderPage() {
-  const view = render(<ModelsPage />);
+async function renderPage(props: { onAddUnit?: () => void } = {}) {
+  const view = render(<ModelsPage {...props} />);
   await flush();
   await flush();
   return view;
@@ -153,15 +161,78 @@ describe("ModelsPage", () => {
     expect(clusterRow.querySelector("button")).toBeNull();
   });
 
-  it("enables per-model actions from model.actions only", async () => {
+  it("shows only the actions model.actions allows, and says why a row has none", async () => {
     const { container } = await renderPage();
-    const serving = row(container, SERVING.modelKey);
-    expect(button("Start", serving).disabled).toBe(true);
-    expect(button("Stop", serving).disabled).toBe(false);
-    expect(button("Reload", serving).disabled).toBe(false);
-    const big = row(container, BIG.modelKey);
-    expect(button("Start", big).disabled).toBe(false);
-    expect(button("Stop", big).disabled).toBe(true);
+    const labels = (key: string) => Array.from(row(container, key).querySelectorAll("button")).map((b) => b.textContent);
+    expect(labels(SERVING.modelKey)).toEqual(["Stop", "Reload", "Logs"]);
+    expect(button("Stop", row(container, SERVING.modelKey)).disabled).toBe(false);
+    expect(labels(BIG.modelKey)).toEqual(["Start", "Logs"]);
+    expect(row(container, SERVING.modelKey).querySelector(".mm-row-reason")).toBeNull();
+    // No lifecycle action: only Logs, plus a short visible reason.
+    expect(labels("vllm|8000|m-loaded")).toEqual(["Logs"]);
+    expect(row(container, "vllm|8000|m-loaded").querySelector(".mm-row-reason")?.textContent).toBe("No action applies in this state");
+  });
+
+  it("sorts rows serving, then loaded/starting, then configured/installed, then the rest, by name", async () => {
+    const { container } = await renderPage();
+    const keys = Array.from(container.querySelectorAll(".mm-table--models tbody tr")).map((r) => r.getAttribute("data-model-key")!.split("|")[2]);
+    expect(keys).toEqual([
+      "qwen3-32b",
+      "m-loaded",
+      "m-starting",
+      "m-stopping",
+      "gemma-4b",
+      "llama-405b",
+      "m-failed",
+      "m-stopped",
+      "m-unknown",
+      "m-unreachable",
+    ]);
+  });
+
+  it("explains read-only rows: no launch profile, an engine without load/unload, and Windows", async () => {
+    const WIN = makeTarget({ targetId: "node:win", name: "Gaming PC", platform: "windows", capabilities: { distributedControl: false, lifecycle: false } });
+    const none = { ...CAPS, start: false, stop: false, load: false, unload: false };
+    vi.mocked(client.getTargets).mockResolvedValue({ targets: [SPARK1, WIN], generatedAt: 1 });
+    vi.mocked(client.getInventory).mockImplementation(async (targetId) =>
+      targetId === "node:win"
+        ? makeInventory({
+            targetId,
+            runtimes: [{ engine: "lmstudio", port: 1234, endpoint: null, reachable: true, capabilities: none, error: null }],
+            models: [makeModel("phi-4", "loaded", { modelKey: "lmstudio|1234|phi-4", engine: "lmstudio", port: 1234 })],
+            clusterModels: [],
+          })
+        : makeInventory({
+            runtimes: [
+              { engine: "sglang", port: 30000, endpoint: null, reachable: true, capabilities: none, error: null, note: "no lifecycle" },
+              { engine: "vllm", port: 8000, endpoint: null, reachable: true, capabilities: { ...CAPS, load: false, unload: false }, error: null },
+            ],
+            models: [
+              makeModel("sg-model", "serving", { modelKey: "sglang|30000|sg-model", engine: "sglang", port: 30000 }),
+              makeModel("adhoc", "serving", { modelKey: "vllm|8000|adhoc" }),
+            ],
+            clusterModels: [],
+          })
+    );
+    const { container } = await renderPage();
+    expect(row(container, "sglang|30000|sg-model").querySelector(".mm-row-reason")?.textContent).toBe("Engine doesn't support load/unload");
+    expect(row(container, "vllm|8000|adhoc").querySelector(".mm-row-reason")?.textContent).toBe("Read-only: no launch profile registered");
+    expect(container.textContent).not.toContain("only Ollama models can be started");
+
+    await click(container.querySelector<HTMLElement>('[data-target-id="node:win"]')!);
+    expect(row(container, "lmstudio|1234|phi-4").querySelector(".mm-row-reason")?.textContent).toBe("Windows host: only Ollama models can be controlled");
+    const notes = Array.from(container.querySelectorAll(".mm-note--platform")).map((n) => n.textContent);
+    expect(notes).toEqual(["Windows host: only Ollama models can be started, stopped or switched from here today. Other engines on this machine are shown read-only."]);
+  });
+
+  it("says why Switch model is disabled when no model can be switched to", async () => {
+    vi.mocked(client.getInventory).mockResolvedValue(makeInventory({ models: [SERVING] }));
+    const { container } = await renderPage();
+    const sw = button("Switch model");
+    expect(sw.disabled).toBe(true);
+    const reason = document.getElementById(sw.getAttribute("aria-describedby")!);
+    expect(reason?.textContent).toBe("No model on this target can be switched to.");
+    expect(container.contains(reason)).toBe(true);
   });
 
   it("warns about stale inventory, unreachable targets and lists discovery errors verbatim", async () => {
@@ -243,19 +314,32 @@ describe("ModelsPage", () => {
     expect(alert.textContent).toContain("target busy: switch running");
   });
 
-  it("locks model control with a banner while the server needs a token it does not have", async () => {
+  it("locks model control with an actionable banner while the server needs a token it does not have", async () => {
     vi.mocked(client.getFleetStatus).mockResolvedValue({ enabled: true, smartRoutingEnabled: false, adapters: [], controlRequiresToken: true, tokenConfigured: false });
     const { container } = await renderPage();
-    expect(container.querySelector("[data-testid=token-banner]")?.textContent).toContain("Set SPARKDASH_TOKEN on the server, then restart it.");
+    const banner = container.querySelector<HTMLElement>("[data-testid=token-banner]")!;
+    expect(banner.textContent).toContain("needs an access token on the dashboard host");
+    const commands = Array.from(banner.querySelectorAll(".mm-cmd__text")).map((c) => c.textContent);
+    expect(commands).toEqual([TOKEN_GENERATE_COMMAND, TOKEN_ENV_LINE]);
+    expect(TOKEN_GENERATE_COMMAND).toBe(`node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"`);
+    expect(TOKEN_ENV_LINE).toBe("SPARKDASH_TOKEN=<value>");
+    expect(banner.textContent).toContain("Restart the dashboard");
+    expect(banner.textContent).toContain("npm run setup does all of this for you.");
+    expect(banner.querySelector("a")?.getAttribute("href")).toContain("docs/FLEET-MODELS.md");
+    // This is the server's missing token, not this browser's: no "Enter token" offer.
+    expect(container.querySelector("[data-testid=token-banner-browser]")).toBeNull();
     const serving = row(container, SERVING.modelKey);
-    for (const label of ["Start", "Stop", "Reload"]) {
+    for (const label of ["Stop", "Reload"]) {
       const b = button(label, serving);
       expect(b.disabled).toBe(true);
-      expect(b.getAttribute("title")).toContain("needs a dashboard access token");
-      expect(b.getAttribute("aria-description")).toContain("needs a dashboard access token");
+      expect(b.hasAttribute("aria-description")).toBe(false);
+      // The reason is visible text the button points at.
+      const reason = document.getElementById(b.getAttribute("aria-describedby")!);
+      expect(reason?.textContent).toContain("needs a dashboard access token");
+      expect(container.contains(reason)).toBe(true);
     }
     expect(button("Switch model").disabled).toBe(true);
-    expect(button("Switch model").getAttribute("title")).toContain("needs a dashboard access token");
+    expect(document.getElementById(button("Switch model").getAttribute("aria-describedby")!)?.textContent).toContain("needs a dashboard access token");
     // Logs stay available.
     expect(button("View logs").disabled).toBe(false);
     // Cluster edits are locked too.
@@ -269,7 +353,61 @@ describe("ModelsPage", () => {
     const { container } = await renderPage();
     expect(container.querySelector("[data-testid=token-banner]")).toBeNull();
     expect(button("Stop", row(container, SERVING.modelKey)).disabled).toBe(false);
-    expect(button("Stop", row(container, SERVING.modelKey)).hasAttribute("title")).toBe(false);
+    expect(button("Stop", row(container, SERVING.modelKey)).hasAttribute("aria-describedby")).toBe(false);
+  });
+
+  it("offers Enter token when the server has a token this browser has not entered", async () => {
+    const fetchMock = vi.fn(async () => ({ ok: true, json: async () => ({ tokenRequired: true, authenticated: false }) }));
+    vi.stubGlobal("fetch", fetchMock);
+    vi.mocked(client.getFleetStatus).mockResolvedValue({ enabled: true, smartRoutingEnabled: false, adapters: [], controlRequiresToken: true, tokenConfigured: true });
+    const prompts: string[] = [];
+    const off = onAuthRequired((reason) => prompts.push(reason));
+    try {
+      const { container } = await renderPage();
+      await flush();
+      expect(fetchMock).toHaveBeenCalledWith("/api/auth/status", expect.anything());
+      const banner = container.querySelector<HTMLElement>("[data-testid=token-banner-browser]")!;
+      expect(banner.textContent).toContain("this browser has not entered it yet");
+      expect(container.querySelector("[data-testid=token-banner]")).toBeNull();
+      // Control is not locked: the server would accept the token once entered.
+      expect(button("Stop", row(container, SERVING.modelKey)).disabled).toBe(false);
+      await click(button("Enter token", banner));
+      expect(prompts).toEqual(["manual"]);
+      // Once a working token is stored, the banner goes away.
+      fetchMock.mockImplementation(async () => ({ ok: true, json: async () => ({ tokenRequired: true, authenticated: true }) }));
+      await act(async () => setToken("secret"));
+      await flush();
+      expect(container.querySelector("[data-testid=token-banner-browser]")).toBeNull();
+    } finally {
+      off();
+    }
+  });
+
+  it("retries the action that hit 401 once the token prompt saves a token", async () => {
+    vi.mocked(client.startOperation)
+      .mockRejectedValueOnce(new client.FleetApiError("Unauthorized", 401))
+      .mockResolvedValueOnce({ operation: makeOperation() });
+    const { container } = await renderPage();
+    await click(button("Start", row(container, BIG.modelKey)));
+    await click(button("Start", dialog()!));
+    expect(client.startOperation).toHaveBeenCalledTimes(1);
+    expect(dialog()!.querySelector("[role=alert]")?.textContent).toContain("runs again automatically");
+    await act(async () => setToken("fresh-token"));
+    await flush();
+    expect(client.startOperation).toHaveBeenCalledTimes(2);
+    expect(client.startOperation).toHaveBeenLastCalledWith("node:spark1", { action: "start", modelKey: BIG.modelKey });
+    expect(container.querySelector(".mm-op")).not.toBeNull();
+  });
+
+  it("does not retry after the confirmation was cancelled", async () => {
+    vi.mocked(client.startOperation).mockRejectedValueOnce(new client.FleetApiError("Unauthorized", 401));
+    const { container } = await renderPage();
+    await click(button("Start", row(container, BIG.modelKey)));
+    await click(button("Start", dialog()!));
+    await click(button("Cancel", dialog()!));
+    await act(async () => setToken("fresh-token"));
+    await flush();
+    expect(client.startOperation).toHaveBeenCalledTimes(1);
   });
 
   it("a 403 token_required answer shows the token message and locks control", async () => {
@@ -363,7 +501,8 @@ describe("ModelsPage", () => {
   it("gives each row action an accessible name with the model", async () => {
     const { container } = await renderPage();
     const names = Array.from(row(container, SERVING.modelKey).querySelectorAll("button")).map((b) => b.getAttribute("aria-label"));
-    expect(names).toEqual(["Start qwen3-32b", "Stop qwen3-32b", "Reload qwen3-32b", "Logs for qwen3-32b"]);
+    expect(names).toEqual(["Stop qwen3-32b", "Reload qwen3-32b", "Logs for qwen3-32b"]);
+    expect(Array.from(row(container, BIG.modelKey).querySelectorAll("button")).map((b) => b.getAttribute("aria-label"))).toEqual(["Start llama-405b", "Logs for llama-405b"]);
   });
 
   it("renders unknown quant and context as the same 'unknown' as memory", async () => {
@@ -424,7 +563,7 @@ describe("ModelsPage", () => {
     expect(client.getLogs).toHaveBeenLastCalledWith("node:spark1", LAUNCHER_KEY);
   });
 
-  it("re-reads targets every 5 s while any target is busy, and stops when none is", async () => {
+  it("re-reads targets every 5 s while any target is busy, then every 15 s once none is", async () => {
     vi.useFakeTimers();
     try {
       vi.mocked(client.getTargets)
@@ -438,26 +577,161 @@ describe("ModelsPage", () => {
       expect(client.getTargets).toHaveBeenCalledTimes(2);
       expect(container.querySelector('[data-target-id="node:spark2"]')?.textContent).not.toContain("Operation running");
       await act(async () => {
-        await vi.advanceTimersByTimeAsync(TARGETS_BUSY_POLL_MS * 3);
+        await vi.advanceTimersByTimeAsync(TARGETS_BUSY_POLL_MS * 2);
       });
       expect(client.getTargets).toHaveBeenCalledTimes(2);
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(TARGETS_POLL_MS);
+      });
+      expect(client.getTargets).toHaveBeenCalledTimes(3);
     } finally {
       vi.useRealTimers();
     }
   });
 
-  it("does not poll targets when none is busy", async () => {
+  it("re-reads the target list every 15 s and the selected inventory every 20 s from the cache", async () => {
     vi.useFakeTimers();
     try {
       vi.mocked(client.getTargets).mockResolvedValue({ targets: [SPARK1, MAC], generatedAt: 1 });
       await renderPage();
+      expect(client.getTargets).toHaveBeenCalledTimes(1);
+      expect(client.getInventory).toHaveBeenCalledTimes(1);
       await act(async () => {
-        await vi.advanceTimersByTimeAsync(TARGETS_BUSY_POLL_MS * 3);
+        await vi.advanceTimersByTimeAsync(TARGETS_BUSY_POLL_MS * 2);
       });
       expect(client.getTargets).toHaveBeenCalledTimes(1);
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(TARGETS_POLL_MS - TARGETS_BUSY_POLL_MS * 2);
+      });
+      expect(client.getTargets).toHaveBeenCalledTimes(2);
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(INVENTORY_POLL_MS - TARGETS_POLL_MS);
+      });
+      expect(client.getInventory).toHaveBeenCalledTimes(2);
+      // The timer never forces discovery: the server keeps its own cache.
+      expect(client.getInventory).toHaveBeenLastCalledWith("node:spark1", false);
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  it("the page Refresh also rediscovers the selected target's inventory", async () => {
+    await renderPage();
+    expect(client.getInventory).toHaveBeenCalledTimes(1);
+    const refresh = Array.from(document.querySelectorAll<HTMLButtonElement>(".page-head__tools button")).find((b) => b.textContent === "Refresh")!;
+    await click(refresh);
+    await flush();
+    expect(client.getInventory).toHaveBeenCalledTimes(2);
+    expect(client.getInventory).toHaveBeenLastCalledWith("node:spark1", true);
+  });
+
+  it("flags an inventory collected more than a minute ago as stale", async () => {
+    vi.mocked(client.getInventory).mockResolvedValue(makeInventory({ collectedAt: Date.now() - 5 * 60_000 }));
+    const first = await renderPage();
+    expect(first.container.querySelector(".mm-age-badge")?.textContent).toBe("stale");
+    vi.mocked(client.getInventory).mockResolvedValue(makeInventory({ collectedAt: Date.now() }));
+    await click(button("Refresh inventory"));
+    expect(first.container.querySelector(".mm-age-badge")).toBeNull();
+  });
+
+  it("reattaches an operation still running on the server, so its progress survives navigation", async () => {
+    vi.mocked(client.listOperations).mockResolvedValue({ operations: [makeOperation({ id: "op-9", targetId: "node:spark1" })] });
+    const { container } = await renderPage();
+    expect(client.listOperations).toHaveBeenCalledWith(true);
+    expect(container.querySelector(".mm-op")?.textContent).toContain("Start llama-405b");
+    expect(client.readOperation).toHaveBeenCalledWith("op-9", undefined);
+    expect(button("Switch model").disabled).toBe(true);
+  });
+
+  it("asks again for operations when a target reports one it is not tracking", async () => {
+    vi.mocked(client.getTargets).mockResolvedValue({ targets: [{ ...SPARK1, busy: true, activeOperationId: "op-7" }, MAC], generatedAt: 1 });
+    vi.mocked(client.listOperations)
+      .mockResolvedValueOnce({ operations: [] })
+      .mockResolvedValue({ operations: [makeOperation({ id: "op-7" })] });
+    const { container } = await renderPage();
+    await flush();
+    expect(vi.mocked(client.listOperations).mock.calls.length).toBeGreaterThanOrEqual(2);
+    expect(container.querySelector(".mm-op")).not.toBeNull();
+  });
+
+  it("degrades silently when the server has no operations list", async () => {
+    vi.mocked(client.listOperations).mockRejectedValue(new client.FleetApiError("Not found", 404));
+    const { container } = await renderPage();
+    expect(container.querySelector(".mm-op")).toBeNull();
+    expect(container.querySelector("[role=alert]")).toBeNull();
+    expect(container.querySelector(".mm-table--models")).not.toBeNull();
+  });
+
+  it("selects the target named by ?target= and keeps the URL in step with the selection", async () => {
+    window.history.replaceState(null, "", "/models?target=node%3Amac");
+    const { container } = await renderPage();
+    expect(container.querySelector('[data-target-id="node:mac"]')?.getAttribute("aria-current")).toBe("true");
+    expect(client.getInventory).toHaveBeenCalledWith("node:mac", false);
+    await click(container.querySelector<HTMLElement>('[data-target-id="node:spark2"]')!);
+    expect(new URLSearchParams(window.location.search).get("target")).toBe("node:spark2");
+    expect(window.location.pathname).toBe("/models");
+  });
+
+  it("falls back to the first target for an unknown ?target=", async () => {
+    window.history.replaceState(null, "", "/models?target=node:gone");
+    const { container } = await renderPage();
+    expect(container.querySelector('[data-target-id="node:spark1"]')?.getAttribute("aria-current")).toBe("true");
+    expect(new URLSearchParams(window.location.search).get("target")).toBe("node:spark1");
+  });
+
+  it("scrolls the details into view after a selection in the stacked layout", async () => {
+    const scroll = vi.fn();
+    const original = Element.prototype.scrollIntoView;
+    Element.prototype.scrollIntoView = scroll;
+    vi.stubGlobal("matchMedia", (query: string) => ({ matches: query.includes("max-width"), media: query }));
+    try {
+      const { container } = await renderPage();
+      expect(scroll).not.toHaveBeenCalled();
+      await click(container.querySelector<HTMLElement>('[data-target-id="node:mac"]')!);
+      expect(scroll).toHaveBeenCalledTimes(1);
+      expect(scroll.mock.contexts[0]).toHaveProperty("classList");
+      expect((scroll.mock.contexts[0] as HTMLElement).classList.contains("mm-detail")).toBe(true);
+    } finally {
+      Element.prototype.scrollIntoView = original;
+    }
+  });
+
+  it("shows which model each target serves, and a running operation", async () => {
+    vi.mocked(client.getTargets).mockResolvedValue({
+      targets: [
+        { ...SPARK1, servingModels: ["qwen3-32b"] },
+        { ...SPARK2, busy: false, servingModels: ["llama-405b", "gemma-4b", "phi-4"], activeOperationId: "op-3" },
+        { ...MAC, servingModels: null },
+        { ...DUO, servingModels: [] },
+        DESK,
+      ],
+      generatedAt: 1,
+    });
+    const { container } = await renderPage();
+    const serving = (id: string) => container.querySelector(`[data-target-id="${id}"] .mm-target__serving`)!;
+    expect(serving("node:spark1").textContent).toBe("Serving qwen3-32b");
+    expect(serving("node:spark2").textContent).toBe("Serving llama-405b +2");
+    expect(serving("node:spark2").getAttribute("title")).toBe("Serving: llama-405b, gemma-4b, phi-4");
+    expect(serving("node:mac").textContent).toBe("serving: unknown");
+    expect(serving("node:mac").className).toContain("mm-unknown");
+    expect(serving("cluster:duo").textContent).toBe("nothing serving");
+    // Older servers: the count is still shown.
+    expect(serving("cluster:desk").textContent).toBe("0 models serving");
+    expect(container.querySelector('[data-target-id="node:spark2"]')?.textContent).toContain("Operation running");
+    expect(container.querySelector('[data-target-id="node:spark1"]')?.textContent).not.toContain("Operation running");
+  });
+
+  it("empty fleet: offers Add a machine when the shell passes onAddUnit, and only then", async () => {
+    vi.mocked(client.getTargets).mockResolvedValue({ targets: [], generatedAt: 1 });
+    const onAddUnit = vi.fn();
+    const withAdd = await renderPage({ onAddUnit });
+    const add = button("Add a machine", withAdd.container);
+    expect(add.className).toContain("btn--primary");
+    await click(add);
+    expect(onAddUnit).toHaveBeenCalledTimes(1);
+    const without = await renderPage();
+    expect(without.container.textContent).toContain("No machines yet");
+    expect(buttons(without.container).some((b) => b.textContent === "Add a machine")).toBe(false);
   });
 
   it("shows a target load error instead of an empty list", async () => {

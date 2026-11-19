@@ -151,7 +151,9 @@ export function ClusterDialog({ open, nodes, onClose, onChanged, controlLocked =
     }
   };
 
-  const tokenHint = controlLocked ? { title: t("token.disabledReason"), "aria-description": t("token.disabledReason") } : {};
+  // Disabled controls point at the dialog's visible token note.
+  const tokenNoteId = useId();
+  const tokenHint = controlLocked ? { "aria-describedby": tokenNoteId } : {};
 
   const failureText = (err: unknown) =>
     isTokenRequiredError(err) ? t("token.banner") : isBusyError(err) ? t("errors.busy", { error: errorText(err) }) : t("errors.cluster", { error: errorText(err) });
@@ -439,7 +441,7 @@ export function ClusterDialog({ open, nodes, onClose, onChanged, controlLocked =
   return (
     <ModelsDialog open={open} busy={busy} onClose={onClose} title={title} tone={view.mode === "delete" ? "danger" : "neutral"} wide footer={footer}>
       {controlLocked ? (
-        <p className="mm-token-note" role="status">
+        <p id={tokenNoteId} className="mm-token-note" role="status">
           {t("token.banner")}
         </p>
       ) : null}

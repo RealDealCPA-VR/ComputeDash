@@ -21,6 +21,7 @@ vi.mock("../../api/fleetClient", async (importOriginal) => {
     getInventory: vi.fn(),
     startOperation: vi.fn(),
     readOperation: vi.fn(),
+    listOperations: vi.fn(),
     cancelOperation: vi.fn(),
     getLogs: vi.fn(),
     listClusters: vi.fn(),
@@ -34,6 +35,7 @@ beforeEach(() => {
   vi.mocked(client.getFleetStatus).mockResolvedValue({ enabled: true, smartRoutingEnabled: false, adapters: [] });
   vi.mocked(client.getTargets).mockResolvedValue({ targets: [SPARK1, SPARK2, DUO, DESK], generatedAt: 1 });
   vi.mocked(client.getInventory).mockResolvedValue(makeInventory({ stale: true }));
+  vi.mocked(client.listOperations).mockResolvedValue({ operations: [] });
 });
 
 afterEach(async () => {

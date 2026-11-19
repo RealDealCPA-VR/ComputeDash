@@ -497,3 +497,64 @@ test("targetHeaderValue never throws, even for a lone surrogate", () => {
   assert.equal(decodeURIComponent(lone), "node:a�");
   assert.equal(targetHeaderValue(undefined), "");
 });
+
+test("an engine that stalls after its headers is cut after the idle timeout: upstream aborted, client response ended", async (t) => {
+  const up = await startUpstream(t, (_req, res) => {
+    res.writeHead(200, { "Content-Type": "text/event-stream" });
+    res.write("data: first\n\n");
+    // ...and then nothing, forever (the connection stays open).
+  });
+  const w = settledWatcher();
+  const a = await startApp(t, ON, {
+    inventories: [inventory("node:a", up.base, ["m"])],
+    onProxySettled: w.onProxySettled,
+    streamIdleTimeoutMs: 150,
+  });
+  const settled = w.next();
+  const started = Date.now();
+  const res = await post(`${a.base}/api/fleet/v1/chat/completions`, { model: "m", stream: true });
+  assert.equal(res.status, 200);
+  const reader = res.body.getReader();
+  const first = await withTimeout(reader.read(), 3000, "the first chunk");
+  assert.match(new TextDecoder().decode(first.value), /data: first/);
+  // The client side ends (cut) instead of hanging, and the engine request is aborted.
+  await withTimeout(
+    (async () => {
+      try {
+        while (!(await reader.read()).done) {
+          /* drain */
+        }
+      } catch {
+        /* a cut connection is the expected outcome */
+      }
+    })(),
+    3000,
+    "the client response to end"
+  );
+  assert.ok(Date.now() - started >= 140, "not cut before the idle timeout");
+  await withTimeout(up.closedCount(1), 3000, "the upstream connection to close");
+  const info = await withTimeout(settled, 3000, "the handler to settle");
+  assert.equal(info.targetId, "node:a");
+  assert.equal(info.clientGone, false);
+});
+
+test("a slow but steady stream is not cut by the idle timeout", async (t) => {
+  const up = await startUpstream(t, (_req, res) => {
+    res.writeHead(200, { "Content-Type": "text/event-stream" });
+    let n = 0;
+    const iv = setInterval(() => {
+      n += 1;
+      res.write(`data: ${n}\n\n`);
+      if (n === 6) {
+        clearInterval(iv);
+        res.end("data: [DONE]\n\n");
+      }
+    }, 60);
+    res.on("close", () => clearInterval(iv));
+  });
+  const a = await startApp(t, ON, { inventories: [inventory("node:a", up.base, ["m"])], streamIdleTimeoutMs: 200 });
+  const res = await post(`${a.base}/api/fleet/v1/chat/completions`, { model: "m", stream: true });
+  const text = await withTimeout(res.text(), 5000, "the whole stream");
+  assert.match(text, /data: 6/);
+  assert.match(text, /\[DONE\]/);
+});

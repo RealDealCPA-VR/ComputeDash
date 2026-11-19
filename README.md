@@ -1,20 +1,88 @@
-# sparkDash ⚡ — Multi-unit monitoring dashboard for NVIDIA DGX Spark
+# ComputeDash
 
 <p align="center">
-  <a href="#latest-version-changelog"><img src="https://img.shields.io/badge/version-v2.90.1-2d9d78?style=flat-square" alt="Latest version: v2.90.1"></a>
-  <img src="https://img.shields.io/badge/platform-arm64-2d9d78?style=flat-square" alt="Platform: ARM64">
+  <img src="https://img.shields.io/badge/ComputeDash-fork%20of%20sparkDash-2d9d78?style=flat-square" alt="ComputeDash, a fork of sparkDash">
+  <a href="#latest-version-changelog"><img src="https://img.shields.io/badge/based%20on-sparkDash%20v2.90.1-2d9d78?style=flat-square" alt="Based on sparkDash v2.90.1"></a>
+  <img src="https://img.shields.io/badge/host-Linux%20%7C%20macOS%20%7C%20Windows-2d9d78?style=flat-square" alt="Dashboard host: Linux, macOS or Windows">
+  <img src="https://img.shields.io/badge/Docker-arm64%20%7C%20amd64-2d9d78?style=flat-square" alt="Docker image: arm64 and amd64">
   <img src="https://img.shields.io/badge/React-19-58c4dc?style=flat-square&logo=react" alt="React 19">
   <img src="https://img.shields.io/badge/Express-5-000000?style=flat-square&logo=express" alt="Express 5">
   <img src="https://img.shields.io/badge/license-Apache%202.0-2d9d78?style=flat-square" alt="Apache License 2.0">
-  <br>
-  <sub>by <a href="https://x.com/MiaAI_lab">Mia'a AI Lab</a></sub>
-  <br><br>
-  <a href="https://x.com/MiaAI_lab" target="_blank" style="display:inline-block;margin:0 8px;vertical-align:middle;"><img src="https://img.shields.io/badge/Follow%20me%20on%20X-000000?style=for-the-badge&logo=x&logoColor=white" alt="Follow Mia on X" height="28" style="height:28px;width:auto;vertical-align:middle;border:0;" /></a>
 </p>
 
-<p align="center"><sub>macOS (darwin) SSH collectors authored by <a href="https://github.com/MikeGibbsOnyx">C. Michael Gibbs</a> and <a href="https://x.com/nyxvoss_ai">Nyx Voss</a> (Onyx AI Labs) — <a href="https://github.com/MikeGibbsOnyx/sparkDash/commits?author=MikeGibbsOnyx">commits</a>. sparkDash by <a href="https://github.com/MiaAI-Lab">Mia's AI Lab</a>.</sub></p>
+One dashboard to **monitor and manage which models run across a mixed GPU fleet**: DGX Sparks, Spark clusters, NVIDIA workstations (Windows included) and Apple Silicon Macs, reached over Tailscale. ComputeDash shows every machine's GPU, memory, power and LLM throughput live, and its **Models** page starts, stops and switches the model each machine or cluster serves, with progress and automatic rollback. Manual control comes first; an optional OpenAI-compatible endpoint can route requests to whichever machine already serves the requested model.
 
-> **New in v2.90.1:** Confirmed spark-attic installation and monitoring, and a more resilient deployment script. [See the release highlights](#latest-version-changelog).
+> **ComputeDash is a fork of [sparkDash](https://github.com/MiaAI-Lab/sparkDash) by [Mia's AI Lab](https://github.com/MiaAI-Lab).**
+> The original authors' work powers the monitoring core (collectors, unit registry, live dashboard, benchmarks, kiosk, alerts and much more), and their documentation is kept below as reference. Upstream contributors are credited in [Acknowledgements](#acknowledgements). sparkDash is licensed under Apache-2.0 from v2.0.0, and so is ComputeDash ([License](#license)).
+
+<p align="center"><sub>sparkDash by <a href="https://github.com/MiaAI-Lab">Mia's AI Lab</a> (<a href="https://x.com/MiaAI_lab">@MiaAI_lab on X</a>). macOS (darwin) SSH collectors authored by <a href="https://github.com/MikeGibbsOnyx">C. Michael Gibbs</a> and <a href="https://x.com/nyxvoss_ai">Nyx Voss</a> (Onyx AI Labs) — <a href="https://github.com/MikeGibbsOnyx/sparkDash/commits?author=MikeGibbsOnyx">commits</a>.</sub></p>
+
+## What ComputeDash adds
+
+- **Fleet Model Manager.** A **Models** page listing every machine and cluster with the real state of each model (installed, configured, loaded, serving…). **Start**, **Stop**, **Reload** and **Switch** run as logged steps with progress, readiness checks and rollback when a switch fails. A distributed Spark cluster is managed as one target. Optional **smart routing** exposes an OpenAI-compatible endpoint (`/api/fleet/v1`) that forwards each request to a machine already serving the model; it never starts or stops models. Guide: [docs/FLEET-MODELS.md](./docs/FLEET-MODELS.md).
+- **Security hardening.** Changes made through Tailscale Serve or a proxy need an access token, model control always needs it, and a non-loopback bind fails closed without it. `?token=` works only for the WebSocket, Origin checks are port-exact, responses carry a Content-Security-Policy with `frame-ancestors 'none'` (configurable for embedding the kiosk), failed logins are rate-limited, and stored SSH passwords and LLM API keys are dropped when a unit's host changes. See [Security](#security).
+- **An Overview fleet board and simpler navigation**, to see the whole fleet and what each machine serves at a glance.
+- **Guided setup.** `npm run setup` checks Node, `ssh` and Tailscale, creates `.env` with a random access token, and prints the next steps (including a start-at-logon snippet on Windows).
+
+Environment variables keep sparkDash's `SPARKDASH_*` names for upstream compatibility.
+
+## Quick start for a mixed fleet
+
+The dashboard runs on one machine (the **host**) and reaches every other machine over SSH and HTTP, typically through Tailscale. The host can be a Windows or Linux workstation, a Mac, or a DGX Spark.
+
+### Windows host (also macOS and Linux, natively)
+
+Prerequisites: **Node.js 22** (`node --version`), Git, the **OpenSSH client** (`ssh -V`; on Windows: Settings → System → Optional features → OpenSSH Client), an **SSH key** that logs in to every machine you want to add, and **Tailscale** signed in on every machine.
+
+No key yet? Create one on the host and copy it to each Linux machine or Mac (Windows has no `ssh-copy-id`; this PowerShell line does the same). Run it as the user that will run the dashboard, and replace `user@spark-1` with each machine's SSH user and Tailscale name:
+
+```powershell
+ssh-keygen -t ed25519
+type $env:USERPROFILE\.ssh\id_ed25519.pub | ssh user@spark-1 "mkdir -p ~/.ssh && cat >> ~/.ssh/authorized_keys && chmod 700 ~/.ssh && chmod 600 ~/.ssh/authorized_keys"
+ssh user@spark-1 hostname
+```
+
+The last command must print the machine's name without asking for a password. (A Mac needs **Remote Login** on; a Windows target uses `administrators_authorized_keys`, see [Windows PCs](#windows-pcs).)
+
+```powershell
+git clone https://github.com/RealDealCPA-VR/ComputeDash.git
+cd ComputeDash
+npm ci
+npm run setup
+npm run build
+npm start
+```
+
+Run the commands one at a time (Windows PowerShell 5.1 has no `&&`).
+
+1. `npm run setup` creates `.env` with a random `SPARKDASH_TOKEN` and reports anything missing. It is safe to run again; `npm run setup -- --check` only reports, and `npm run setup -- --print-token` shows the token.
+2. Open **http://127.0.0.1:5555** on the host. With a token set, the first change you make (such as adding a machine) opens an **Access token** dialog: paste the value from `npm run setup -- --print-token`. The browser remembers it.
+3. Add machines with **+** next to *Sparks*: an **NVIDIA DGX Spark**, a **Dedicated GPU host** (Linux with NVIDIA), a **Windows PC** ([Windows PCs](#windows-pcs)) or an **Apple Silicon Mac** ([Mac units](#mac-units)), each by its Tailscale name or IP and an SSH user. A Windows host cannot be its own *local* unit (that reads Linux `/proc`); to monitor it too, enable its OpenSSH Server and add it as a Windows PC.
+4. For phones and other computers, publish the dashboard on your tailnet with `tailscale serve --bg 5555` and open `https://<host>.<tailnet>.ts.net`. The browser asks for the access token once and remembers it.
+5. Open **Models** to see and control what each machine serves: [docs/FLEET-MODELS.md](./docs/FLEET-MODELS.md).
+
+On Windows, `npm run setup` also prints a `Register-ScheduledTask` snippet that starts the dashboard at logon; setup itself registers nothing. Windows hosting details and limits: [Hosting on Windows](./docs/FLEET-MODELS.md#hosting-on-windows-dell-precision).
+
+### Docker on a DGX Spark
+
+On a Spark, the dashboard can also monitor the Spark itself as the local unit, from a privileged container:
+
+```bash
+git clone https://github.com/RealDealCPA-VR/ComputeDash.git
+cd ComputeDash
+cp .env.example .env
+echo "SPARKDASH_TOKEN=$(openssl rand -hex 32)" >> .env   # or, with Node 22: npm run setup
+docker compose up --build -d
+sudo tailscale serve --bg 5555
+```
+
+Open `http://127.0.0.1:5555` on the Spark, or the Tailscale URL elsewhere. The container is privileged (host PID, network and filesystem), so treat the token like a root password and read [Docker: privileges and the secrets key](./docs/REMOTE-ACCESS.md#docker-privileges-and-the-secrets-key). SSH key mounts, the published image and development setups: [Install details](#install-details-docker-development-published-image).
+
+---
+
+## About sparkDash
+
+The rest of this README is sparkDash's documentation, kept as reference and updated where ComputeDash changed behaviour. It describes the monitoring core that ComputeDash builds on.
 
 sparkDash is a real-time web dashboard for one or more **NVIDIA DGX Spark (GB10)** machines in a single browser window. It streams GPU, CPU, unified memory, storage, network, and local LLM metrics — and lets you add, edit, reorder, or remove Sparks from the UI without restarts or code changes.
 
@@ -38,6 +106,8 @@ Monitored units run **Linux**, **macOS**, or **Windows** (a Windows PC with an N
 
 ## Table of contents
 
+- [What ComputeDash adds](#what-computedash-adds)
+- [Quick start for a mixed fleet](#quick-start-for-a-mixed-fleet)
 - [Latest version changelog](#latest-version-changelog)
 - [Features](#features)
 - [LLM server presets & backend auto-detection](#llm-server-presets--backend-auto-detection)
@@ -59,7 +129,7 @@ Monitored units run **Linux**, **macOS**, or **Windows** (a Windows PC with an N
 - [Intel Arc GPUs](#intel-arc-gpus)
 - [Windows PCs](#windows-pcs)
 - [Full changelog](./CHANGELOG.md)
-- [Quick start](#quick-start)
+- [Install details (Docker, development, published image)](#install-details-docker-development-published-image)
 - [Architecture](#architecture)
 - [Tech stack](#tech-stack)
 - [Repository layout](#repository-layout)
@@ -75,6 +145,8 @@ Monitored units run **Linux**, **macOS**, or **Windows** (a Windows PC with an N
 ---
 
 ## Latest version changelog
+
+sparkDash's release notes, up to v2.90.1, the release ComputeDash is based on. ComputeDash's own changes are recorded in [CHANGELOG.md](./CHANGELOG.md) and the repository history.
 
 ### Version 2.90.1
 
@@ -185,7 +257,7 @@ Full history: [CHANGELOG.md](./CHANGELOG.md)
 | **Restart from the UI** | When the fleet changes and Energy needs a restart, a **Restart sparkDash** button restarts the Docker container (only offered when it can) |
 | **Themes** | Dark, light, cool white, OLED — neutral palettes, persisted in `localStorage` |
 | **Secrets** | SSH passwords AES-256-GCM encrypted; never in `sparks.json` or API responses |
-| **Docker-first** | Single privileged container for host metrics; prod and dev Compose files |
+| **Docker or native** | Single privileged container for host metrics on a Spark (prod and dev Compose files), or `npm start` natively on Linux, macOS or Windows |
 | **Hot config** | Add / edit / remove / reorder Sparks from the UI with no process restart |
 | **Home Assistant** | Custom integration: one device per unit already on this dashboard ([Home Assistant](#home-assistant)) |
 
@@ -388,11 +460,13 @@ Tailscale Serve publishes the loopback-only dashboard over HTTPS to your tailnet
 1. **Enable HTTPS certificates and Serve for the tailnet** (admin does this once):
    open the approval link Tailscale prints on first use, or in the admin console enable
    **HTTPS** (MagicDNS → HTTPS Certificates) and **Tailscale Serve**.
-2. On the sparkDash host, publish the dashboard (the dashboard must be running — Docker or `npm start`):
+2. On the dashboard host, publish the dashboard (the dashboard must be running — Docker or `npm start`):
 
    ```bash
-   sudo tailscale serve --bg --https=443 http://127.0.0.1:5555
+   sudo tailscale serve --bg 5555
    ```
+
+   This is short for `tailscale serve --bg --https=443 http://127.0.0.1:5555`. On Windows, run it without `sudo` (from an administrator PowerShell if it reports access denied).
 
    If the container binds a specific address instead of loopback, proxy that address
    (check `docker logs sparkDash` for the `bind=` line), e.g.
@@ -407,7 +481,8 @@ Tailscale Serve publishes the loopback-only dashboard over HTTPS to your tailnet
 Notes:
 
 - The Tailscale hostname works with the default loopback bind — no `SPARKDASH_ALLOWED_HOSTS` entry needed (that list is only for custom reverse-proxy domains).
-- Access is **tailnet-only**. Any device signed in to the tailnet (phone, laptop) can open the URL; nobody else can. For public exposure use `tailscale funnel` and an authenticated front door (see [Remote access](./docs/REMOTE-ACCESS.md)) — but prefer keeping it tailnet-only.
+- Requests through Tailscale Serve are not direct local: without `SPARKDASH_TOKEN` they can only read (every change answers `403 token_required`); with a token set, the browser asks for it once and then has full access. Run `npm run setup` to create one. See [Security](#security).
+- Access is **tailnet-only**. Any device signed in to the tailnet (phone, laptop) can open the URL; nobody else can. Do not use `tailscale funnel` without `SPARKDASH_TOKEN`: it would publish a read-only dashboard to the internet. Keep it tailnet-only (see [Remote access](./docs/REMOTE-ACCESS.md)).
 - The proxy forwards `/api/*` and `/ws` including WebSocket upgrades; nothing else to configure.
 - To remove it later: `sudo tailscale serve --https=443 off`.
 - Snap installs run Tailscale as root; if the plain command reports *Access denied*, use `sudo tailscale serve …`.
@@ -466,6 +541,8 @@ URL flags choose the layout without touching settings:
 | `?cols=N` | A fixed number of columns (1–8) instead of the layout that gives the largest cards |
 | `?theme=oled` | A theme for this screen only (`white`, `light`, `dark`, `oled`); it is not saved |
 
+The dashboard refuses to be framed by other sites (`frame-ancestors 'none'`). To show `/kiosk` in a Home Assistant iframe card or another page you control, set `SPARKDASH_FRAME_ANCESTORS` to that page's origin (for example `https://homeassistant.tailnet.ts.net`); see [Remote access](./docs/REMOTE-ACCESS.md#embedding-the-kiosk-home-assistant).
+
 ## Glance integration
 
 [Glance](https://github.com/glanceapp/glance) can show the cluster on a self-hosted dashboard with the community widget [`sparkdash-dgx-cluster`](https://github.com/glanceapp/community-widgets/tree/main/widgets/sparkdash-dgx-cluster) (contributed by [@linxichen](https://github.com/linxichen)). One `custom-api` card renders GPU temperature and usage, VRAM, generation tok/s, KV-cache usage, and uptime for a head node plus one worker, reading `/api/sparks/:id/metrics` directly:
@@ -490,13 +567,13 @@ URL flags choose the layout without touching settings:
 | `SPARKDASH_NODE2_URL` | Metrics URL of a second unit. For a single Spark, drop the `subrequests` map and the widget's second node block |
 | `SPARKDASH_DASHBOARD_URL` | Dashboard base URL, used for the card's title link |
 
-`/api/sparks/:id/metrics` is unauthenticated on loopback, the same as the rest of the dashboard. Read [Security](#security) before exposing it beyond a trusted network.
+`/api/sparks/:id/metrics` follows the dashboard's read rules: open to a client on the dashboard machine itself, and through Tailscale Serve or a proxy open only while no `SPARKDASH_TOKEN` is set (with a token, send it as `Authorization: Bearer`). Read [Security](#security) before exposing it beyond a trusted network.
 
 ---
 
 ## Home Assistant
 
-Home Assistant can poll this dashboard directly. Copy [`homeassistant/custom_components/sparkdash`](./homeassistant/custom_components/sparkdash) into `config/custom_components/sparkdash`, restart, then **Settings → Devices & services → Add integration → sparkDash**. The URL is fetched by Home Assistant, not by the browser. sparkDash listens on loopback by default; a Home Assistant host on another machine needs a reachable address (`BIND_HOST`) and, unless you accept an open LAN port, `SPARKDASH_TOKEN`. The integration sends that token as `Authorization: Bearer` and never writes settings or power state.
+Home Assistant can poll this dashboard directly. Copy [`homeassistant/custom_components/sparkdash`](./homeassistant/custom_components/sparkdash) into `config/custom_components/sparkdash`, restart, then **Settings → Devices & services → Add integration → sparkDash**. The URL is fetched by Home Assistant, not by the browser. The dashboard listens on loopback by default; a Home Assistant host on another machine reaches it through Tailscale Serve (recommended) or a non-loopback `BIND_HOST`, and needs `SPARKDASH_TOKEN` either way once a token is set (a non-loopback bind refuses to start without one). The integration sends that token as `Authorization: Bearer` and never writes settings or power state.
 
 Each Spark already listed by `GET /api/sparks` becomes a device. Sensors cover GPU temperature, usage and power, system power, VRAM, CPU, memory, OOM risk, the first probed model, decode tok/s, active slots and uptime, plus an online flag. The poll interval is 30 seconds. One Spark that misses its metrics call does not drop the others. Reload the integration after you add a Spark.
 
@@ -556,7 +633,7 @@ The last 30 runs per unit are kept in `config/quality-bench-history.json`, with 
 
 Opt-in (default **off**). **Settings → Prometheus metrics** serves every unit's metrics at `GET /metrics` in the Prometheus text format (0.0.4), so Prometheus, VictoriaMetrics or Grafana Agent can scrape sparkDash and keep history beyond what the dashboard shows. While the setting is off the path answers `404`.
 
-`/metrics` goes through the same auth as the REST API: open on a loopback install, and on a remote bind with `SPARKDASH_TOKEN` set it needs the token as a bearer header.
+`/metrics` goes through the same auth as the REST API: open to a scraper on the dashboard machine itself; through Tailscale Serve, a proxy or a non-loopback bind it needs the token as a bearer header once `SPARKDASH_TOKEN` is set.
 
 ```yaml
 scrape_configs:
@@ -564,7 +641,7 @@ scrape_configs:
     scrape_interval: 15s
     static_configs:
       - targets: ["sparkdash.lan:5555"]
-    # Only when SPARKDASH_TOKEN is set on a non-loopback bind:
+    # When SPARKDASH_TOKEN is set and the scraper is not on the dashboard machine:
     authorization:
       type: Bearer
       credentials_file: /etc/prometheus/sparkdash.token
@@ -732,7 +809,7 @@ On by default (`fleetModelsEnabled`). The **Models** page (`/models`) lists ever
 - **Clusters.** A *distributed* cluster (members serving one model at one endpoint, started and stopped by a launcher on the head) is listed once and never counted again on its members. A *visual group* only groups nodes. Head/worker roles are offered as suggestions.
 - **Smart routing (optional).** Off by default (`smartRoutingEnabled`). When on, `/api/fleet/v1` is an OpenAI-compatible endpoint that forwards each request to a target already serving the model (`smartRoutingPolicy`: `least-loaded`, `first-available` or `round-robin`). It never starts, stops or switches models.
 
-**Model control needs an access token.** Inventories and logs can be read without one, but starting, stopping or switching models, cancelling operations, changing clusters and the routing proxy answer `403 token_required` until `SPARKDASH_TOKEN` is set (`SPARKDASH_FLEET_ALLOW_NO_TOKEN=1` lifts this on a single-user, loopback-only host). Keep the default loopback bind and publish it with [Tailscale Serve](#tailscale-serve-https). On a loopback bind the token protects changes and the WebSocket, not reads: anyone the front door admits can read inventories, logs and the route table, so limit who reaches it with your tailnet policy. The dashboard also runs natively on Windows 11 (Node 22 and the built-in `ssh.exe`). Operator guide, API reference, Windows hosting and troubleshooting: [docs/FLEET-MODELS.md](./docs/FLEET-MODELS.md).
+**Model control needs an access token.** Starting, stopping or switching models, cancelling operations, changing clusters and the routing proxy answer `403 token_required` until `SPARKDASH_TOKEN` is set, even from a browser on the dashboard machine (`npm run setup` creates the token; `SPARKDASH_FLEET_ALLOW_NO_TOKEN=1` lifts the requirement and is not recommended). Keep the default loopback bind and publish it with [Tailscale Serve](#tailscale-serve-https). Once a token is set, clients coming through Tailscale Serve need it for reads too; without one, anyone the front door admits can read inventories, logs and the route table, so limit who reaches it with your tailnet policy. The dashboard also runs natively on Windows 11 (Node 22 and the built-in `ssh.exe`). Operator guide, API reference, Windows hosting and troubleshooting: [docs/FLEET-MODELS.md](./docs/FLEET-MODELS.md).
 
 ---
 
@@ -855,7 +932,7 @@ Model launchers require Bash, util-linux `setsid`, and GNU `tail` with `--pid` s
 
 Safeguards: the whole disk, top-level system folders, `/etc`, `/boot`, `/usr/bin`, `/var/lib/docker`, home folders themselves and any `.ssh` folder (deleting it would lock the dashboard out) cannot be deleted from here; the delete program also refuses a path that reaches its target through a symbolic link and a mount point. Paths and image IDs reach the unit only as base64 arguments, never as script text. Sudo passwords follow the [GPU clock rules](#gpu-clock-cap): sent once over https or from the machine itself (or over plain http if you turn on **Settings → Allow sudo password over plain http**, off by default, for a network you trust), piped to `sudo -S`, never stored or logged, with the same lock after wrong guesses; the page keeps a typed password in memory until you leave it or press **Forget**. Tick **Remember it on this dashboard** (off by default, so each password is used once unless you choose otherwise) and, once sudo has accepted it, the server keeps it encrypted with the secrets key in `config/storage-sudo.json` (never sent back to the browser) so you are not asked again, even after a reload; **Forget password** removes it, and one sudo no longer accepts is dropped by itself. Anyone who can use the dashboard can then run administrator actions on that Spark. On a plain-http connection the dialog shows a `sudo rm` command to run on the Spark instead. Activity records each delete and image removal. The Spark, tab and folder are kept in the address bar (`/storage?spark=…&tab=…&path=…`), so Back, Forward and copied links work. API: `GET /api/sparks/:id/storage`, `GET …/storage/context`, `GET|POST|DELETE …/storage/scan`, `POST …/storage/advise` (the delete check, read-only), `POST …/storage/delete`, `POST …/storage/delete-many` (1 to 200 paths; answers 202 with a job that `GET …/storage/delete-many/:jobId` follows, and `GET …/storage/delete-many` returns the latest; one request counts once against the rate limit, and Activity gets one entry per run), `POST …/storage/docker` and `…/storage/docker/remove-images` and `…/remove-containers` (same token and rate limits as the power routes).
 
-**Who can do what (trust model).** sparkDash has a single trusted-administrator model. Anyone who can reach the dashboard (with the dashboard token when `SPARKDASH_TOKEN` is set, or anyone who can reach an open or loopback-only deployment) is an administrator of every Spark it manages: they can analyse, delete, remove Docker images and containers, and use a remembered sudo password. There are no roles and no per-person accounts. Activity records what was done and on which Spark, not who did it, and rate limits count per client address. The page says this in a short note at the bottom.
+**Who can do what (trust model).** sparkDash has a single trusted-administrator model. Anyone who can make changes on the dashboard (with the dashboard token when `SPARKDASH_TOKEN` is set; without one, anyone using a browser on the dashboard machine itself, or anyone who can reach a deployment started with `SPARKDASH_ALLOW_OPEN_REMOTE=1`) is an administrator of every Spark it manages: they can analyse, delete, remove Docker images and containers, and use a remembered sudo password. There are no roles and no per-person accounts. Activity records what was done and on which Spark, not who did it, and rate limits count per client address. The page says this in a short note at the bottom.
 
 **Remembered sudo passwords.** Off by default and per Spark account: `user@host:port`, or `local` for the Spark the dashboard runs on. Each is encrypted with the dashboard's secrets key (`SPARKDASH_SECRETS_KEY`, or the generated `config/.secrets-key`), kept in `config/storage-sudo.json` (`STORAGE_SUDO_JSON_PATH`), and never sent back to the browser; any dashboard user can use it. To revoke one, press **Forget password** in any administrator prompt for that Spark (or call `DELETE /api/sparks/:id/storage/sudo-password`); one sudo no longer accepts (for example after the password was changed on the Spark) is dropped at its next use. To revoke all of them, stop the dashboard, delete `config/storage-sudo.json`, and start it again: a running server keeps what it loaded and would write it back.
 
@@ -949,17 +1026,20 @@ If another enabled unit in `/etc/systemd/system` also sets a limit at boot, the 
 
 It acts at once on the host's saved connection settings; it is not part of **Save**. Activity records each change. Sudo works as for the [GPU clock cap](#gpu-clock-cap): passwordless sudo needs nothing more, otherwise the section asks for the **sudo password** of the SSH user, which is sent once and never stored or logged. Over plain http from another machine, either turn on **Settings → Allow sudo password over plain http** or run the `sudo nvidia-smi` command the section shows on the host (that command does not install the boot service).
 
-## Quick start
+## Install details (Docker, development, published image)
+
+The short version is [Quick start for a mixed fleet](#quick-start-for-a-mixed-fleet). Details:
 
 ```bash
-git clone https://github.com/MiaAI-Lab/sparkDash.git
-cd sparkDash
+git clone https://github.com/RealDealCPA-VR/ComputeDash.git
+cd ComputeDash
+npm run setup        # .env with an access token (needs Node 22)
 
 # Production (Docker; loopback-only by default)
 docker compose up --build -d
 
 # Or development (host, with hot reload)
-npm install
+npm ci
 npm run dev
 ```
 
@@ -972,7 +1052,7 @@ For another computer, keep the server on loopback and use an SSH tunnel:
 ssh -N -L 5555:127.0.0.1:5555 user@sparkdash-host
 ```
 
-Then open `http://127.0.0.1:5555` on that computer. For shared access, use an authenticated TLS reverse proxy, Tailscale Serve, or set `BIND_HOST=0.0.0.0` **and** `SPARKDASH_TOKEN`. A direct LAN bind without a token is **open by default**: anyone who can reach the port can change settings and power units off, and the header shows an **Open access** warning. Set `SPARKDASH_TOKEN` to require a token, or `SPARKDASH_ALLOW_OPEN_REMOTE=0` to make a tokenless LAN bind refuse to start.
+Then open `http://127.0.0.1:5555` on that computer; a tunnel counts as direct local. For shared access, set `SPARKDASH_TOKEN` and use Tailscale Serve or an authenticated TLS reverse proxy. A direct LAN bind (`BIND_HOST=0.0.0.0`) refuses to start without `SPARKDASH_TOKEN`; `SPARKDASH_ALLOW_OPEN_REMOTE=1` starts it open to anyone who can reach the port (the header then shows an **Open access** warning) and is not recommended. See [Security](#security).
 
 When the server has `SPARKDASH_TOKEN` set, the dashboard asks for it: the first request or live-telemetry connection the server turns away opens an **Access token** dialog. Enter the token once; it is checked against the server, stored in this browser only, and the live connection reconnects with it — no reload, no devtools. **Settings → Access token** shows whether one is stored and lets you change or clear it.
 
@@ -981,7 +1061,7 @@ For development with Docker (source-mounted, HMR):
 docker compose -f docker-compose.dev.yml up --build
 ```
 
-**Published image (no local build):** each release tag (`v*`) is built for arm64 and amd64 and pushed to `ghcr.io/miaai-lab/sparkdash`. The workflow only runs for tags pushed after it was added, so releases up to v2.32.0 have no image: until the first newer release is out, `docker pull` answers `denied` (an unpublished package looks the same as a private one) and you build from source (`docker compose up --build -d`). `docker-compose.image.yml` runs that image with the same host mounts and environment as `docker-compose.yml`; it is the only file the host needs, and `./config` next to it holds the runtime state:
+**Published image (no local build):** this is sparkDash's upstream image and does **not** contain ComputeDash's changes (Models page, `npm run setup`, security changes); build from this repository for those. Each upstream release tag (`v*`) is built for arm64 and amd64 and pushed to `ghcr.io/miaai-lab/sparkdash`. The workflow only runs for tags pushed after it was added, so releases up to v2.32.0 have no image: until the first newer release is out, `docker pull` answers `denied` (an unpublished package looks the same as a private one) and you build from source (`docker compose up --build -d`). `docker-compose.image.yml` runs that image with the same host mounts and environment as `docker-compose.yml`; it is the only file the host needs, and `./config` next to it holds the runtime state:
 
 ```bash
 curl -fsSLO https://raw.githubusercontent.com/MiaAI-Lab/sparkDash/main/docker-compose.image.yml
@@ -996,7 +1076,7 @@ It follows `latest` unless `SPARKDASH_VERSION` names a release (`SPARKDASH_VERSI
 - ${HOME}/.ssh/id_ed25519:/root/.ssh/id_ed25519:ro
 ```
 
-If the key file has a non-default name (e.g. `id_ed25519_shared`), mount it **as** `id_ed25519`, or set `SSH_IDENTITY_FILE` to the path inside the container. Keep the file mode `600`. The unit that runs sparkDash itself should be added with **This host (local collectors — no SSH for metrics)**.
+If the key file has a non-default name (e.g. `id_ed25519_shared`), mount it **as** `id_ed25519`, or set `SSH_IDENTITY_FILE` to the path inside the container. Keep the file mode `600`. The unit that runs the dashboard itself should be added with **This host (local collectors — no SSH for metrics)**. A native install (`npm start`) uses the operator's own keys instead: `~/.ssh`, or `%USERPROFILE%\.ssh` on Windows.
 
 ---
 
@@ -1004,12 +1084,14 @@ If the key file has a non-default name (e.g. `id_ed25519_shared`), mount it **as
 
 The dashboard does not have to run on a Spark. Every unit, including the machine running the dashboard, can be monitored over SSH, so you can run sparkDash on any Linux box (an x86 mini PC, a NAS, a VM) and add all your Sparks as remote units.
 
-- The shipped `Dockerfile` and `docker-compose.yml` target arm64 DGX Spark hosts (platform pin and `aarch64` NVIDIA library mounts). On x86 either edit those lines or run it bare: `npm install && npm run build && npm start` (Node 22).
+- **Native is simplest:** `npm ci`, `npm run setup`, `npm run build`, `npm start` (Node 22) on Linux, macOS or Windows. It needs no privileged container, and remote units are read over SSH either way.
+- **Docker on x86:** the image itself builds natively for amd64 (nothing pins the platform; see [Install details](#install-details-docker-development-published-image)). The Compose files do mount the NVIDIA management library from the arm64 path `/usr/lib/aarch64-linux-gnu/libnvidia-ml.so.1`: on an x86 host with an NVIDIA GPU change that line to `/usr/lib/x86_64-linux-gnu/libnvidia-ml.so.1`, and on a host without one remove it together with the `nvidia-smi` mount. The amd64 image has seen less use than arm64; reports and PRs are welcome.
 - Add each Spark with **Add Spark** using its LAN IP and an SSH user. The machine running the dashboard does not need a GPU; skip adding it as a unit.
-- An x86 Docker build is untested. Reports and PRs are welcome.
-- **Native Windows 11** also works, with Node 22 and the built-in `ssh.exe`: run `npm ci`, then `npm run build`, then `npm start` (as separate commands; Windows PowerShell 5.1 has no `&&`). Use SSH keys (there is no `sshpass`; SSH connection reuse is off by default on Windows), and add the Windows machine itself as a Windows PC unit rather than the local unit. Details and limits: [Hosting on Windows](./docs/FLEET-MODELS.md#hosting-on-windows-dell-precision).
+- **Native Windows 11** also works, with Node 22 and the built-in `ssh.exe`: run `npm ci`, `npm run setup`, `npm run build`, then `npm start` (as separate commands; Windows PowerShell 5.1 has no `&&`). Use SSH keys (there is no `sshpass`; SSH connection reuse is off by default on Windows), and add the Windows machine itself as a Windows PC unit rather than the local unit. Details and limits: [Hosting on Windows](./docs/FLEET-MODELS.md#hosting-on-windows-dell-precision).
 
 ## Architecture
+
+The diagram shows the Docker deployment; a native install (`npm start`) runs the same Express process directly on the host, without the container.
 
 Design principle: **one Spark model, N instances**. Every unit is a record in `config/sparks.json` with a `kind` field (`spark` or `host`). The same `SparkMonitor`, `SystemCollector`, and `LlmProbe` code runs for all of them. Adding a unit is a config change, not a code change.
 
@@ -1047,8 +1129,8 @@ Poll loops run in the background (even with no clients) so rate metrics — toke
 |-------|--------|
 | Frontend | React 19, TypeScript, Vite 8, Tailwind CSS v4 |
 | Backend | Node.js (ESM), Express 5, `ws` |
-| Platform | The dashboard targets ARM64 — DGX Spark GB10 (Neoverse V2). Units it monitors can be Linux, macOS or Windows machines over SSH |
-| Deploy | Docker multi-stage (arm64), Compose |
+| Platform | Dashboard host: a DGX Spark (Docker, arm64), or any Linux, macOS or Windows 11 machine with Node 22. Units it monitors can be Linux, macOS or Windows machines over SSH |
+| Deploy | Docker multi-stage (arm64 and amd64), Compose; or native `npm start` |
 | Secrets | AES-256-GCM SSH password store |
 | Ports | **5555** dashboard/API; **5173** Vite (dev only) |
 
@@ -1057,7 +1139,7 @@ Poll loops run in the background (even with no clients) so rate metrics — toke
 ## Repository layout
 
 ```txt
-sparkDash/
+ComputeDash/
 ├── src/                 React + TypeScript SPA
 │   ├── api/             REST client + shared types
 │   ├── components/      Overview, Spark pages, dialogs, UI primitives
@@ -1079,7 +1161,8 @@ sparkDash/
 ├── config/              Runtime state (volume; secrets gitignored)
 ├── assets/              Logo (bolt.svg) and legacy media
 ├── .github/             README screenshot and Showcase video; image publish workflow
-├── Dockerfile           Production multi-stage arm64
+├── scripts/            Setup (setup.mjs), deploy, test runner and helper programs
+├── Dockerfile           Production multi-stage (arm64 and amd64)
 ├── docker-compose.yml   Production
 ├── docker-compose.image.yml  Production from the published image
 ├── docker-compose.dev.yml
@@ -1140,7 +1223,7 @@ sparkDash/
 | GET | `/api/apikeys/status` · `/api/apikeys/keys` · `/api/apikeys/keys/:id` | Read-only API keys views through the host bridge (opt-in, `404` while off; see [API Keys](#api-keys)) |
 | WS | `/ws` | Real-time metrics stream |
 
-There is no application authentication on the HTTP/WebSocket API. sparkDash therefore binds to loopback and refuses direct LAN binding. Use an SSH tunnel, authenticated TLS reverse proxy, or Tailscale Serve; see [Remote access](./docs/REMOTE-ACCESS.md).
+Every route uses one bearer token, `SPARKDASH_TOKEN` (`Authorization: Bearer <token>`; `?token=` only on `/ws`), under the rules in [Security](#security). The server binds to loopback and refuses a non-loopback bind without a token. Use Tailscale Serve, an SSH tunnel or an authenticated TLS reverse proxy; see [Remote access](./docs/REMOTE-ACCESS.md).
 
 `/api/fleet-energy` samples the configured fleet independently every two seconds. It estimates
 each node as GPU board draw + a CPU utilization model (5.2–65 W) + 23 W of memory/network/base
@@ -1229,14 +1312,16 @@ ACP rows are metadata only: they can look recent, and they are never labeled Gen
 
 ### Environment variables
 
-Copy `.env.example` to `.env` if needed:
+`npm run setup` creates `.env` from `.env.example` (and adds `SPARKDASH_TOKEN`); or copy it by hand. The names keep sparkDash's `SPARKDASH_*` prefix for upstream compatibility:
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `BIND_HOST` | `127.0.0.1` | HTTP and WebSocket listen address. A non-loopback bind without `SPARKDASH_TOKEN` is open to anyone who can reach it (see `SPARKDASH_ALLOW_OPEN_REMOTE`). |
-| `SPARKDASH_TOKEN` | _(empty)_ | Bearer token. When set, it is required for every mutation and WebSocket connection, and for REST reads on a non-loopback bind. The browser prompts for it when needed (Settings → Access token to change it). |
-| `SPARKDASH_ALLOW_OPEN_REMOTE` | `1` | Unset, empty, or `1`: a non-loopback bind without `SPARKDASH_TOKEN` stays open. `0`: refuse to start without a token (fail closed). |
-| `SPARKDASH_FLEET_ALLOW_NO_TOKEN` | _(unset)_ | `1`: allow [fleet model](#fleet-model-manager) control (operations, cancel, cluster changes, the routing proxy) without `SPARKDASH_TOKEN`. Only for a single-user host reachable on loopback alone; behind Tailscale Serve every tailnet device arrives through loopback. Unset: those routes answer `403 token_required` until a token is set. |
+| `BIND_HOST` | `127.0.0.1` | HTTP and WebSocket listen address. A non-loopback bind refuses to start without `SPARKDASH_TOKEN` (see `SPARKDASH_ALLOW_OPEN_REMOTE`). |
+| `SPARKDASH_TOKEN` | _(empty)_ | Bearer token (`npm run setup` creates one). When set, every change needs it, and so does every read that does not come directly from the dashboard machine (Tailscale Serve, a proxy, a LAN bind). Without it, changes are allowed only from the dashboard machine itself and model control is refused. The browser prompts for it when needed (Settings → Access token to change it). See [Security](#security). |
+| `SPARKDASH_ALLOW_OPEN_REMOTE` | _(unset)_ | Unset: a non-loopback bind without `SPARKDASH_TOKEN` refuses to start (fail closed). `1`: start it open to anyone who can reach the port. Not recommended. |
+| `SPARKDASH_FLEET_ALLOW_NO_TOKEN` | _(unset)_ | `1`: allow [fleet model](#fleet-model-manager) control (operations, cancel, cluster changes, the routing proxy) without `SPARKDASH_TOKEN`. Not recommended; only for a single-user host that nothing else can reach. Unset: those routes answer `403 token_required` until a token is set. |
+| `SPARKDASH_FRAME_ANCESTORS` | _(unset: `'none'`)_ | Origins allowed to show the dashboard in a frame, space-separated (CSP `frame-ancestors` sources; commas are rejected), for example a Home Assistant dashboard showing `/kiosk`. See [Remote access](./docs/REMOTE-ACCESS.md#embedding-the-kiosk-home-assistant). |
+| `SPARKDASH_ALLOWED_ORIGINS` | _(empty)_ | Extra browser origins (comma-separated, full `scheme://host:port`) allowed to call the API, for example a separate front end. Other origins get `403 origin_not_allowed`. See [Remote access](./docs/REMOTE-ACCESS.md). |
 | `SPARKDASH_ALLOWED_HOSTS` | _(empty)_ | Only for a reverse proxy on a custom domain: comma-separated names a loopback bind should also answer to. `localhost`, IP addresses, this machine's hostname and its Tailscale name work without it. |
 | `SPARKDASH_MQTT_PASSWORD` | _(empty)_ | Password for the MQTT broker configured in Settings → MQTT (the URL and username live in `settings.json`). Read once at startup. |
 | `SPARKDASH_HA_TOKEN` | _(empty)_ | Long-lived Home Assistant access token for [power meters](./docs/POWER-METERS.md) (the URL and outlets live in `config/power-meters.json`). Read once at startup. |
@@ -1262,7 +1347,7 @@ Copy `.env.example` to `.env` if needed:
 | `POLL_INTERVAL_NVERR` | `60000` | Incremental kernel journal reads for NV_ERR, Xid and OOM counters (ms), after the initial backfill |
 | `HERMES_UPDATE_TIMEOUT_MS` | `600000` | Hard timeout for running `hermes update` over SSH (ms) |
 | `POLL_INTERVAL_LIVENESS` | `5000` | Online/SSH liveness check (ms) |
-| `SPARKDASH_SECRETS_KEY` | _(auto)_ | Passphrase or 64-char hex for secret encryption |
+| `SPARKDASH_SECRETS_KEY` | _(auto)_ | Passphrase or 64-char hex for secret encryption. Unset: generated in `config/.secrets-key`. Set it (outside `config/`) to keep backups of `config/` free of the key; see [Remote access](./docs/REMOTE-ACCESS.md#docker-privileges-and-the-secrets-key) |
 | `HOST_PROC_PATH` | `/host/proc` | Host proc mount inside container |
 | `HOST_SYS_PATH` | `/host/sys` | Host sys mount |
 | `HOST_ROOT_PATH` | `/host/root` | Host root mount |
@@ -1284,10 +1369,10 @@ Copy `.env.example` to `.env` if needed:
 For compatibility, `SSH_CONTROL_PERSIST` is accepted as a seconds-based fallback when `SSH_CONTROL_PERSIST_SECONDS` is unset. Connection reuse is on by default except on Windows, whose `ssh.exe` does not support it. `SSH_MULTIPLEX=0` turns it off everywhere and any other non-empty value turns it on. If the socket directory cannot be created, the server warns once and continues without reuse. SSH tunnels always use an independent connection.
 
 > The listener and both Compose files default to `127.0.0.1`. Existing Docker users who opened
-> `http://<host-ip>:5555` must migrate to an SSH tunnel, authenticated reverse proxy, Tailscale
-> Serve, or `BIND_HOST=0.0.0.0 SPARKDASH_TOKEN=...` (without the token a `0.0.0.0` bind is open to the
-> network unless `SPARKDASH_ALLOW_OPEN_REMOTE=0`). Recovery:
-> `BIND_HOST=127.0.0.1 docker compose up -d --force-recreate`.
+> `http://<host-ip>:5555` must migrate to Tailscale Serve, an SSH tunnel, an authenticated reverse
+> proxy, or `BIND_HOST=0.0.0.0 SPARKDASH_TOKEN=...` (without the token a `0.0.0.0` bind refuses to
+> start). Remove `SPARKDASH_ALLOW_OPEN_REMOTE=1` from a `.env` copied from an older example.
+> Recovery: `BIND_HOST=127.0.0.1 docker compose up -d --force-recreate`.
 
 ### Adding a unit
 
@@ -1297,7 +1382,7 @@ For compatibility, `SSH_CONTROL_PERSIST` is accepted as a seconds-based fallback
    - **Apple Silicon Mac** — a Mac monitored over SSH with macOS tools, optionally through the [Mac node agent](agents/macos/README.md) for runtime detection; see [Mac units](#mac-units).
    - **Dedicated GPU host** — any Linux machine with an NVIDIA GPU. It is monitored exactly like a Spark (SSH + `nvidia-smi`) but is **not** reported as a DGX Spark: the header shows a detected hardware summary (GPU model, CPU, RAM) instead of fixed GB10 specs, and the page shows separate **RAM** and **VRAM** panels (VRAM from `nvidia-smi`, RAM from system memory). On the unit page, RAM → Network → Storage stack in the right column with GPU filling the left column. A host with **more than one GPU** needs nothing extra: every card `nvidia-smi` lists is collected, the header names them all, the GPU panel shows a block per card, and `metrics.gpu` stays the aggregate (hottest / busiest card, summed power and VRAM) with the per-card detail under `gpu.gpus[]`.
    - **Windows PC with an NVIDIA GPU** — a Windows machine with the OpenSSH Server and the NVIDIA driver; see [Windows PCs](#windows-pcs). Always a remote unit; no model launchers, CPU temperature or Hermes / Tailnet checks.
-3. Set **Name** and choose whether this is **This host**. Local units do not require a LAN IP or SSH; their optional LAN IP enables browser links. On a dedicated GPU host it also directs Wake-on-LAN. Remote units require a LAN IP/host, SSH user, and key or password. Key auth in Docker needs a key mounted into the container (see Quick start).
+3. Set **Name** and choose whether this is **This host**. Local units do not require a LAN IP or SSH; their optional LAN IP enables browser links. On a dedicated GPU host it also directs Wake-on-LAN. Remote units require a LAN IP/host, SSH user, and key or password. Key auth in Docker needs a key mounted into the container (see [Install details](#install-details-docker-development-published-image)).
    - **LLM host** (optional, `llmHost` in the unit's config): when the model API listens on one specific address of a multi-interface Spark, pin it here; probes and benchmarks then use it instead of the LAN IP (SSH keeps using the SSH host). An unreachable `llmHost` is never tunnelled to the SSH host's loopback.
 4. **Test** shows pass/fail/skipped for host collectors/SSH and each enabled service (LLM, ComfyUI, Hermes Agent, Tailnet). Every enabled capability must pass; disable an unavailable optional service before saving if it should not be monitored.
 5. Save — a tab appears and metrics start streaming.
@@ -1422,7 +1507,7 @@ unchanged apart from the platform badge.
 - **Wake** / **Wake All** send a UDP magic packet (port 9) to **dedicated GPU hosts** whose NIC and firmware support Wake-on-LAN. The MAC is taken from the **enP7s7** interface while the host is online (persisted as `detectedMacAddress`), or from a **MAC override** in Edit Spark. Broadcast is derived as `/24` from LAN IP, or `255.255.255.255` if LAN IP is missing. **DGX Spark does not wake this way** — the GB10 onboard NIC has no Wake-on-LAN — so the Wake control is not offered on Spark units.
 - On a **Windows PC** shutdown runs `shutdown.exe /s /t 5` over SSH; Wake-on-LAN needs a MAC address entered by hand.
 - Batch shutdown only targets **online** Sparks; offline nodes are skipped.
-- Power APIs are mutations: with `SPARKDASH_TOKEN` set they require it; without it they are open on loopback (local trust) **and** on a remote bind, unless `SPARKDASH_ALLOW_OPEN_REMOTE=0` makes that bind fail closed.
+- Power APIs are changes: with `SPARKDASH_TOKEN` set they require it; without it they work only from a browser on the dashboard machine itself, and requests through Tailscale Serve or a proxy get `403 token_required` (see [Security](#security)).
 
 ### Themes
 
@@ -1441,13 +1526,26 @@ Choice is stored in `localStorage`.
 
 ## Security
 
+ComputeDash binds to `127.0.0.1:5555` and has one bearer token, `SPARKDASH_TOKEN` (`npm run setup` creates it). A request is **direct local** when it arrives on a loopback socket without proxy forwarding headers and with a loopback `Host`/`Origin` (`localhost`, `127.0.0.1`): a browser on the dashboard machine itself, or an SSH tunnel to it. Tailscale Serve and reverse proxies are **through a proxy**.
+
+| | No `SPARKDASH_TOKEN` | `SPARKDASH_TOKEN` set |
+|---|---|---|
+| Direct local: read and change | Everything (except model control) | Reads open; changes need the token |
+| Through Tailscale Serve or a proxy: read (monitoring) | Allowed | Token required |
+| Through Tailscale Serve or a proxy: change (shutdown, wake, launcher start/stop, settings, adding units…) | `403 token_required` | Token required |
+| Model control (Models page, clusters, routing proxy) | `403 token_required` (opt-out `SPARKDASH_FLEET_ALLOW_NO_TOKEN=1`, not recommended) | Token required |
+| Non-loopback `BIND_HOST` | Refuses to start (unless `SPARKDASH_ALLOW_OPEN_REMOTE=1`, not recommended) | Starts; non-local requests need the token |
+
+The browser asks for the token once and stores it (**Settings → Access token**). `?token=` in a URL is accepted only for the WebSocket. Origin checks are port-exact; responses carry a Content-Security-Policy with `frame-ancestors 'none'` (set `SPARKDASH_FRAME_ANCESTORS` to embed the kiosk); repeated failed authentication is rate-limited. `GET /api/health` reports the startup mode as `authMode`: `loopback-open`, `bearer`, `open-remote` or `required-missing`. Details and deployment patterns: [Remote access](./docs/REMOTE-ACCESS.md).
+
 - **SSH passwords** are not stored in `sparks.json` and are never returned by the API.
 - Passwords are encrypted with **AES-256-GCM** in `config/sparks-secrets.json` (survives restarts).
-- Encryption key: `config/.secrets-key` (auto-generated) or `SPARKDASH_SECRETS_KEY`. **Do not delete the key file** or encrypted secrets become unreadable.
+- Encryption key: `config/.secrets-key` (auto-generated) or `SPARKDASH_SECRETS_KEY`, which takes precedence. **Do not delete the key file** without moving its value to `SPARKDASH_SECRETS_KEY`, or encrypted secrets become unreadable. Keeping the key outside `config/` means a copy of `config/` holds only ciphertext ([how](./docs/REMOTE-ACCESS.md#docker-privileges-and-the-secrets-key)).
+- **Credentials follow their host.** Changing a unit's SSH host, user or port drops its stored SSH password; changing its LLM host drops its stored LLM API keys.
+- **The Docker deployment is privileged** (host PID, network and read-only root filesystem): control of the dashboard amounts to root on that host. Prefer a native install on machines that are not monitored as the local unit.
 - **Target validation** rejects clearly unsafe IPv4 targets (link-local `169.254.0.0/16`, `0.0.0.0/8`, multicast/reserved ≥ 224). Private, loopback, and public addresses are allowed so LAN and remote Sparks work.
 - SSH and HTTP probes use short timeouts (about 5 s SSH connect, 3 s HTTP) so a hung host cannot stall the poll loop.
-- Prefer **SSH keys** over passwords. In Docker, mount the private key into `/root/.ssh` (see Quick start); passwords are the only SSH secret the app stores itself.
-- Loopback installs remain local-trust. A remote bind (`BIND_HOST` not loopback) **without** `SPARKDASH_TOKEN` is open by default: anyone who can reach the port can read telemetry, change settings and power units off, and the header shows an **Open access** warning (dismissible per browser). Set `SPARKDASH_TOKEN` to require a bearer token for mutations and remote telemetry/WebSocket, and `SPARKDASH_ALLOW_OPEN_REMOTE=0` to refuse to start a remote bind without one. `GET /api/health` reports which applies as `authMode`: `loopback-open`, `bearer`, `open-remote`, or `required-missing`.
+- Prefer **SSH keys** over passwords. In Docker, mount the private key into `/root/.ssh` (see [Install details](#install-details-docker-development-published-image)); passwords are the only SSH secret the app stores itself.
 - One-off remote benchmark hosts must be listed in `SPARKDASH_BENCH_HOSTS`.
 - Tested operator capacity for this remediation: **12 units**.
 
@@ -1458,6 +1556,7 @@ Choice is stored in `localStorage`.
 
 | Command | Purpose |
 |---------|---------|
+| `npm run setup` | First-run helper: checks Node, `ssh` and Tailscale, creates `.env` and `SPARKDASH_TOKEN`, prints next steps. `-- --check` reports only, `-- --print-token` shows the token |
 | `npm run dev` | Vite (5173) + Express (5555) together |
 | `npm run dev:server` | Express only (`node --watch`) |
 | `npm run dev:client` | Vite only |
@@ -1558,7 +1657,7 @@ The source must return `application/json` with this shape:
 
 `generatedAt` is the source sampling time, refreshed by the source on each sample. Both arrays are required. The first 256 active input rows are normalized and grouped by principal/model: duplicate groups sum counts, take the maximum oldest age and minimum newest age. Counts are independently positive safe integers, not limited to 256; an unsafe individual count or combined total makes the sample unavailable. Truncated input is marked incomplete. Snake-case `oldest_age_ms`/`newest_age_ms` are also accepted. Principals not in the configured label list become `unknown`; model labels are optional non-secret identifiers. URL/IP labels and recognizable credential-like model segments become `unknown`, but this is not a general secret detector: the source must never place credentials or user content in metadata. Recent rows may provide an actual HTTP `status`, otherwise no status is invented. At most 24 recent rows are retained in memory, with a 10-minute recent window and bounded non-negative ages/durations. Extra fields—including keys, headers, IPs, request IDs and prompts—are discarded, not persisted. Source bodies, failures and URLs are not logged or returned by the dashboard API.
 
-The source is read at most once per 5 seconds, shared between dashboard viewers. The server judges sample freshness: samples older than 30 seconds, invalid payloads and failed reads show **unknown**, not zero. The browser trusts the server's `available`, without comparing server timestamps to its own clock. A separate 30-second no-response timer hides the last live display if a later browser fetch hangs, and resets on a successful response. A fresh empty `active` array is a measured zero. The read-only `/api/inference/activity` route uses the dashboard's existing GET access policy and `Cache-Control: no-store`: loopback GETs remain open, while a token-protected remote bind requires the dashboard token. Configuration is not writable through that route or Settings. The card is absent when no URL is configured, including when the normal sidebar cards are hidden.
+The source is read at most once per 5 seconds, shared between dashboard viewers. The server judges sample freshness: samples older than 30 seconds, invalid payloads and failed reads show **unknown**, not zero. The browser trusts the server's `available`, without comparing server timestamps to its own clock. A separate 30-second no-response timer hides the last live display if a later browser fetch hangs, and resets on a successful response. A fresh empty `active` array is a measured zero. The read-only `/api/inference/activity` route uses the dashboard's existing GET access policy and `Cache-Control: no-store`: direct-local GETs remain open, while reads through a proxy or a LAN bind require the dashboard token once one is set. Configuration is not writable through that route or Settings. The card is absent when no URL is configured, including when the normal sidebar cards are hidden.
 
 **In flight includes queued, prefill and decoding HTTP requests.** It is not the number of active GPU slots, does not distinguish engine queueing, and does not measure per-key token throughput. This card needs an external sanitized activity source; an unmodified model server without that source remains unchanged.
 
@@ -1592,13 +1691,15 @@ Validate with a supported Node release such as 22.23.2: `npm ci`, `npm test`, `n
 
 ## License
 
-[Apache License 2.0](./LICENSE) from version 2.0.0 onward. Copyright 2026 Mia's AI Lab. See [NOTICE](./NOTICE).
+[Apache License 2.0](./LICENSE) from version 2.0.0 onward. sparkDash is Copyright 2026 Mia's AI Lab. ComputeDash's modifications are Copyright 2026 the ComputeDash contributors and are licensed under the same Apache License 2.0; the sparkDash files it changes are listed in [docs/MODIFICATIONS.md](./docs/MODIFICATIONS.md). See [NOTICE](./NOTICE).
 
 Versions up to 1.9.0 were released under the MIT License ([LICENSE-MIT](./LICENSE-MIT)), and those releases stay MIT-licensed.
 
 ---
 
 ## Acknowledgements
+
+ComputeDash builds on [sparkDash](https://github.com/MiaAI-Lab/sparkDash) by [Mia's AI Lab](https://github.com/MiaAI-Lab); thank you for the project and for releasing it under an open license.
 
 sparkDash is built and maintained by [Mia's AI Lab](https://mia-ai.net/).
 

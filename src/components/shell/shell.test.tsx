@@ -114,12 +114,14 @@ describe("AppSidebar", () => {
       const stats = Array.from(container.querySelectorAll<HTMLButtonElement>(".tabbar button")).find((b) => b.textContent?.includes("Stats"))!;
       expect(stats.getAttribute("aria-current")).toBe(showModels ? "page" : null);
       act(() => stats.click());
-      const names = Array.from(document.body.querySelectorAll(".sheet .rail-item__name")).map((n) => n.textContent);
+      const sheets = document.body.querySelectorAll(".sheet");
+      const names = Array.from(sheets[sheets.length - 1].querySelectorAll(".rail-item__name")).map((n) => n.textContent);
       act(() => document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape" })));
       return names;
     };
     expect(openStats(false)).not.toContain("Models");
-    expect(openStats(true)).toContain("Models");
+    // Models is the first entry of the Stats sheet.
+    expect(openStats(true)[0]).toBe("Models");
   });
 
   it("links the Temps page with a deep-linkable href", () => {
@@ -308,7 +310,7 @@ describe("MobileTabBar sheet", () => {
     expect(document.activeElement).toBe(opener);
   });
 
-  it("Stats opens Token totals, Fleet energy, Temps, Activity and Storage; Sparks lists Storage under Benchs & Tools; Showcase follows Prefill", () => {
+  it("Stats opens Token totals, Fleet energy, Temps and Activity; Sparks lists machines first, then Storage once under Benchs & Tools; Showcase follows Prefill", () => {
     const onSelect = vi.fn();
     const { container } = render(
       <MobileTabBar sparks={[makeSpark("a")]} activeId={null} onSelect={onSelect} onAdd={() => {}} onOpenSettings={() => {}} />
@@ -317,7 +319,7 @@ describe("MobileTabBar sheet", () => {
     expect(tab("Search")).toBeUndefined();
     act(() => tab("Stats").click());
     let names = [...document.querySelectorAll(".sheet .rail-item__name")].map((n) => n.textContent);
-    expect(names).toEqual(["Token totals", "Cost compare", "Fleet energy", "Temps", "Activity", "Storage"]);
+    expect(names).toEqual(["Token totals", "Cost compare", "Fleet energy", "Temps", "Activity"]);
     act(() => {
       document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
     });
@@ -327,8 +329,11 @@ describe("MobileTabBar sheet", () => {
     expect(names).not.toContain("Token totals");
     expect(names).not.toContain("Fleet energy");
     expect(names).not.toContain("Activity");
-    expect(names).toContain("Storage");
+    expect(names.filter((n) => n === "Storage")).toHaveLength(1);
     expect(names.indexOf("Showcase")).toBe(names.indexOf("Prefill") + 1);
+    // Machines come before the benchmarks.
+    expect(names.indexOf("Spark a")).toBeGreaterThanOrEqual(0);
+    expect(names.indexOf("Spark a")).toBeLessThan(names.indexOf("Decode"));
     const labels = [...document.querySelectorAll(".sheet .rail-label")].map((n) => n.textContent);
     expect(labels).toContain("Benchs & Tools");
     expect(labels).not.toContain("Benchmarks");
@@ -336,5 +341,63 @@ describe("MobileTabBar sheet", () => {
     const storage = [...document.querySelectorAll<HTMLButtonElement>(".sheet .rail-item")].find((b) => b.textContent === "Storage")!;
     act(() => storage.click());
     expect(onSelect).toHaveBeenCalledWith("__storage__");
+  });
+});
+
+describe("AppSidebar sections", () => {
+  const base = { sparks: [makeSpark("a")], onSelect: () => {}, onAdd: () => {}, onOpenSettings: () => {}, onOpenSearch: () => {}, connected: true, showModels: true, onSelectBench: () => {} };
+  afterEach(() => localStorage.clear());
+
+  it("groups every page under labelled Fleet, Insights, Tools and Benchmarks navs", () => {
+    const { container } = render(<AppSidebar {...base} activeId={null} showApiKeys />);
+    const hrefs = (label: string) => [...container.querySelectorAll(`nav[aria-label="${label}"] a`)].map((a) => a.getAttribute("href"));
+    expect(hrefs("Fleet")).toEqual(["/", "/models", "/activity"]);
+    expect(hrefs("Insights")).toEqual(["/tokens", "/cost", "/api-keys", "/energy", "/temps"]);
+    expect(hrefs("Tools")).toEqual(["/storage", "/showcase", "/kiosk"]);
+    expect(hrefs("Benchmarks").length).toBeGreaterThan(0);
+    expect(container.querySelector("aside")?.getAttribute("aria-label")).toBe("Fleet navigation");
+  });
+
+  it("collapses a section, remembers it per browser and keeps the current page's section open", () => {
+    const first = render(<AppSidebar {...base} activeId={null} />);
+    const toggle = [...first.container.querySelectorAll<HTMLButtonElement>("button.rail-label--toggle")].find((b) => b.textContent === "Insights")!;
+    expect(toggle.getAttribute("aria-expanded")).toBe("true");
+    act(() => toggle.click());
+    expect(toggle.getAttribute("aria-expanded")).toBe("false");
+    expect(first.container.querySelector<HTMLElement>("#rail-insights")?.hidden).toBe(true);
+    expect(JSON.parse(localStorage.getItem("sparkdash.sidebar.sections") ?? "{}")).toEqual({ insights: false });
+
+    const again = render(<AppSidebar {...base} activeId={null} />);
+    const nav = (c: HTMLElement) => c.querySelector<HTMLElement>("#rail-insights")!;
+    expect(nav(again.container).hidden).toBe(true);
+    // A page inside a collapsed section keeps it open.
+    const onTemps = render(<AppSidebar {...base} activeId="__temps__" />);
+    expect(nav(onTemps.container).hidden).toBe(false);
+    expect(nav(onTemps.container).querySelector('[aria-current="page"]')?.getAttribute("href")).toBe("/temps");
+  });
+
+  it("disables the toggle of a section held open by the current page, and leaves the saved state alone", () => {
+    const { container } = render(<AppSidebar {...base} activeId="__temps__" />);
+    const toggle = [...container.querySelectorAll<HTMLButtonElement>("button.rail-label--toggle")].find((b) => b.textContent === "Insights")!;
+    expect(toggle.getAttribute("aria-expanded")).toBe("true");
+    expect(toggle.getAttribute("aria-disabled")).toBe("true");
+    act(() => toggle.click());
+    expect(toggle.getAttribute("aria-expanded")).toBe("true");
+    expect(container.querySelector<HTMLElement>("#rail-insights")?.hidden).toBe(false);
+    expect(localStorage.getItem("sparkdash.sidebar.sections")).toBeNull();
+    // Other sections still toggle.
+    const tools = [...container.querySelectorAll<HTMLButtonElement>("button.rail-label--toggle")].find((b) => b.textContent === "Tools")!;
+    expect(tools.hasAttribute("aria-disabled")).toBe(false);
+    act(() => tools.click());
+    expect(tools.getAttribute("aria-expanded")).toBe("false");
+  });
+
+  it("still toggles when browser storage is blocked", () => {
+    vi.spyOn(Storage.prototype, "getItem").mockImplementation(() => { throw new Error("blocked"); });
+    vi.spyOn(Storage.prototype, "setItem").mockImplementation(() => { throw new Error("blocked"); });
+    const { container } = render(<AppSidebar {...base} activeId={null} />);
+    const toggle = [...container.querySelectorAll<HTMLButtonElement>("button.rail-label--toggle")].find((b) => b.textContent === "Tools")!;
+    act(() => toggle.click());
+    expect(toggle.getAttribute("aria-expanded")).toBe("false");
   });
 });

@@ -135,7 +135,8 @@ export async function probeLlmHttp(host, port, opts = {}) {
  *   spawnImpl?: typeof spawn,
  *   allocatePort?: () => Promise<number>,
  * }} [opts]
- * @returns {Promise<{ host: string, port: number, via: "ssh-tunnel", close: () => void }>}
+ * @returns {Promise<{ host: string, port: number, via: "ssh-tunnel", close: () => void, isOpen: () => boolean }>}
+ *   isOpen: false once the ssh process exited
  */
 export async function openSshLlmTunnel(spark, remotePort, opts = {}) {
   const p = Number(remotePort);
@@ -199,6 +200,12 @@ export async function openSshLlmTunnel(spark, remotePort, opts = {}) {
   // Ignore exit/error after the local port is accepting — mid-job drops
   // surface as HTTP failures on the bench streams.
   let opened = false;
+  // Known after the forward opened too: a pooled tunnel whose ssh exited is not reused (its local
+  // port may already belong to another forward).
+  let exited = false;
+  child.once("exit", () => {
+    exited = true;
+  });
   const exitPromise = new Promise((_, reject) => {
     child.once("error", (err) => {
       if (opened) return;
@@ -244,6 +251,7 @@ export async function openSshLlmTunnel(spark, remotePort, opts = {}) {
     port: localPort,
     via: "ssh-tunnel",
     close,
+    isOpen: () => !exited,
   };
 }
 
@@ -258,7 +266,10 @@ export async function openSshLlmTunnel(spark, remotePort, opts = {}) {
  *   onStatus?: (msg: string) => void,
  *   probe?: typeof probeLlmHttp,
  *   openTunnel?: typeof openSshLlmTunnel,
+ *   skipDirect?: boolean,
  * }} [opts]
+ *   skipDirect: the caller knows this port was reachable only through a tunnel recently, so the
+ *   direct probe is skipped. Ignored for local units and for units with an llmHost (no tunnel).
  * @returns {Promise<{ host: string, port: number, via: "direct" | "ssh-tunnel", close: () => void }>}
  */
 export async function resolveLlmHttpTarget(spark, port, opts = {}) {
@@ -279,7 +290,8 @@ export async function resolveLlmHttpTarget(spark, port, opts = {}) {
 
   if (spark?.isLocal) return direct;
 
-  if (host && isAllowedTargetHost(host)) {
+  const tryDirect = opts.skipDirect !== true || Boolean(spark?.llmHost);
+  if (tryDirect && host && isAllowedTargetHost(host)) {
     opts.onStatus?.(`Reaching LLM on ${host}:${p}…`);
     const ok = await probe(host, p, { apiKey: opts.apiKey });
     if (ok) return direct;

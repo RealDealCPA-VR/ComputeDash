@@ -221,3 +221,29 @@ test("resolveLlmHttpTarget: an unreachable llmHost never falls back to the SSH h
   );
   assert.equal(tunneled, 0);
 });
+
+test("resolveLlmHttpTarget: skipDirect opens the tunnel without the direct probe; ignored with an llmHost", async () => {
+  const spark = { isLocal: false, lanIp: "192.168.1.143", ssh: { host: "192.168.1.143", user: "mia", auth: "key" } };
+  let probes = 0;
+  let tunneled = 0;
+  const opts = {
+    probe: async () => {
+      probes += 1;
+      return false;
+    },
+    openTunnel: async () => {
+      tunneled += 1;
+      return { host: "127.0.0.1", port: 41234, via: "ssh-tunnel", close: () => {} };
+    },
+  };
+  const t = await resolveLlmHttpTarget(spark, 8888, { ...opts, skipDirect: true });
+  assert.equal(t.via, "ssh-tunnel");
+  assert.equal(probes, 0, "no doomed direct probe");
+  assert.equal(tunneled, 1);
+  // Without the hint the behaviour is unchanged: probe first.
+  await resolveLlmHttpTarget(spark, 8888, opts);
+  assert.equal(probes, 1);
+  // An llmHost is never tunnelled, so the hint cannot skip its only path.
+  await assert.rejects(resolveLlmHttpTarget({ ...spark, llmHost: "192.168.1.150" }, 8888, { ...opts, skipDirect: true }), /llmHost/);
+  assert.equal(probes, 2);
+});

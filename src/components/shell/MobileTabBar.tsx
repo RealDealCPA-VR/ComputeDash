@@ -69,9 +69,11 @@ export function MobileTabBar({ sparks, activeId, onSelect, onAdd, onOpenSettings
     return () => document.removeEventListener("keydown", onKey);
   }, [sheet]);
   // Which tab the sliding highlight sits under (-1 hides it, e.g. while on a Settings dialog).
-  const statsActive = activeId === TOKENS_ID || activeId === COST_ID || (showApiKeys && activeId === API_KEYS_ID) || (showModels && activeId === MODELS_ID) || activeId === ENERGY_ID || activeId === TEMPS_ID || activeId === ACTIVITY_ID || activeId === STORAGE_ID;
+  const statsActive = activeId === TOKENS_ID || activeId === COST_ID || (showApiKeys && activeId === API_KEYS_ID) || (showModels && activeId === MODELS_ID) || activeId === ENERGY_ID || activeId === TEMPS_ID || activeId === ACTIVITY_ID;
+  // Benchmarks, Showcase and Storage live in the Sparks sheet ("Benchs & Tools"), so its tab is the one lit.
+  const toolsActive = benchTypeOf(activeId) != null || activeId === SHOWCASE_ID || activeId === STORAGE_ID;
   const tabIndex =
-    sheetKind === "sparks" ? 1 : sheetKind === "stats" ? 2 : activeId === OVERVIEW_ID ? 0 : onSpark ? 1 : statsActive ? 2 : -1;
+    sheetKind === "sparks" ? 1 : sheetKind === "stats" ? 2 : activeId === OVERVIEW_ID ? 0 : onSpark || toolsActive ? 1 : statsActive ? 2 : -1;
   const pageButton = (id: string, label: string, icon: ReactNode, compact = false) => (
     <button
       key={id}
@@ -123,41 +125,18 @@ export function MobileTabBar({ sparks, activeId, onSelect, onAdd, onOpenSettings
               <div ref={trapRef} className={`sheet ${leaving ? "is-leaving" : ""}`} role="dialog" aria-modal="true" aria-label={sheetKind === "stats" ? t("nav.stats") : t("mobile.chooseSpark")}>
                 <div className="rail-list">
                   {sheetKind === "stats" ? (
-                    ([
-                      [TOKENS_ID, t("nav.tokens"), <TokensIcon key="t" className="h-4 w-4" />],
-                      [COST_ID, t("nav.cost"), <CoinsIcon key="c" className="h-4 w-4" />],
-                      [ENERGY_ID, t("nav.energy"), <BoltIcon key="e" className="h-4 w-4" />],
-                      [TEMPS_ID, t("nav.temps"), <ThermometerIcon key="tp" className="h-4 w-4" />],
-                      [ACTIVITY_ID, t("nav.activity"), <ListIcon key="a" className="h-4 w-4" />],
-                      [STORAGE_ID, t("nav.storage"), <DiskIcon key="st" className="h-4 w-4" />],
-                    ] as const).map(([id, label, icon]) => pageButton(id, label, icon)).concat(
-                      showModels ? [pageButton(MODELS_ID, t("nav.models"), <LayersIcon key="m" className="h-4 w-4" />)] : [],
-                      showApiKeys ? [pageButton(API_KEYS_ID, t("nav.apiKeys"), <KeyIcon key="k" className="h-4 w-4" />)] : []
-                    )
+                    <>
+                      {/* Models first: what runs where is the fleet's first question. Storage lives under Benchs & Tools. */}
+                      {showModels ? pageButton(MODELS_ID, t("nav.models"), <LayersIcon className="h-4 w-4" />) : null}
+                      {pageButton(TOKENS_ID, t("nav.tokens"), <TokensIcon className="h-4 w-4" />)}
+                      {pageButton(COST_ID, t("nav.cost"), <CoinsIcon className="h-4 w-4" />)}
+                      {pageButton(ENERGY_ID, t("nav.energy"), <BoltIcon className="h-4 w-4" />)}
+                      {pageButton(TEMPS_ID, t("nav.temps"), <ThermometerIcon className="h-4 w-4" />)}
+                      {pageButton(ACTIVITY_ID, t("nav.activity"), <ListIcon className="h-4 w-4" />)}
+                      {showApiKeys ? pageButton(API_KEYS_ID, t("nav.apiKeys"), <KeyIcon className="h-4 w-4" />) : null}
+                    </>
                   ) : (
                     <>
-                  <div className="rail-label rail-label--spaced">
-                    <span>{t("nav.benchsTools")}</span>
-                  </div>
-                  {NAV_BENCH_TYPES.map((b) => (
-                    <Fragment key={b.id}>
-                      <button
-                        type="button"
-                        className={`rail-item rail-item--compact ${benchNavActive(b, benchTypeOf(activeId)) ? "is-active" : ""}`}
-                        onClick={() => {
-                          setSheet(false);
-                          onSelect(benchId(b.id));
-                        }}
-                      >
-                        <BenchIcon id={b.id} className="h-3.5 w-3.5" />
-                        <span className="rail-item__name">{benchLabels[b.id]?.label ?? b.label}</span>
-                      </button>
-                      {b.id === "prefill"
-                        ? pageButton(SHOWCASE_ID, t("nav.showcase"), <TerminalIcon className="h-3.5 w-3.5" />, true)
-                        : null}
-                    </Fragment>
-                  ))}
-                  {pageButton(STORAGE_ID, t("nav.storage"), <DiskIcon className="h-3.5 w-3.5" />, true)}
                   <div className="rail-label rail-label--spaced">
                     <span>{t("nav.sparks")}</span>
                   </div>
@@ -187,6 +166,28 @@ export function MobileTabBar({ sparks, activeId, onSelect, onAdd, onOpenSettings
                     <PlusIcon className="h-4 w-4" />
                     <span className="rail-item__name">{t("mobile.addSpark")}</span>
                   </button>
+                  <div className="rail-label rail-label--spaced">
+                    <span>{t("nav.benchsTools")}</span>
+                  </div>
+                  {NAV_BENCH_TYPES.map((b) => (
+                    <Fragment key={b.id}>
+                      <button
+                        type="button"
+                        className={`rail-item rail-item--compact ${benchNavActive(b, benchTypeOf(activeId)) ? "is-active" : ""}`}
+                        onClick={() => {
+                          setSheet(false);
+                          onSelect(benchId(b.id));
+                        }}
+                      >
+                        <BenchIcon id={b.id} className="h-3.5 w-3.5" />
+                        <span className="rail-item__name">{benchLabels[b.id]?.label ?? b.label}</span>
+                      </button>
+                      {b.id === "prefill"
+                        ? pageButton(SHOWCASE_ID, t("nav.showcase"), <TerminalIcon className="h-3.5 w-3.5" />, true)
+                        : null}
+                    </Fragment>
+                  ))}
+                  {pageButton(STORAGE_ID, t("nav.storage"), <DiskIcon className="h-3.5 w-3.5" />, true)}
                   <div className="rail-label rail-label--spaced">
                     <span>{t("nav.fleet")}</span>
                   </div>

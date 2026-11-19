@@ -1,5 +1,5 @@
 import { BenchIcon } from "../bench/BenchIcon";
-import { useEffect, useMemo, useState, type MouseEvent } from "react";
+import { useEffect, useMemo, useState, type MouseEvent, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import {
   DndContext,
@@ -170,6 +170,75 @@ function RailSpark({
   );
 }
 
+type SectionId = "fleet" | "insights" | "tools";
+/** Collapsed rail sections, remembered per browser ({ [section]: false } = collapsed). */
+export const RAIL_SECTIONS_KEY = "sparkdash.sidebar.sections";
+const FLEET_PAGES = [OVERVIEW_ID, MODELS_ID, ACTIVITY_ID];
+const INSIGHT_PAGES = [TOKENS_ID, COST_ID, API_KEYS_ID, ENERGY_ID, TEMPS_ID];
+const TOOL_PAGES = [STORAGE_ID, SHOWCASE_ID];
+
+function readSections(): Record<string, boolean> {
+  try {
+    const raw = JSON.parse(localStorage.getItem(RAIL_SECTIONS_KEY) ?? "{}");
+    if (!raw || typeof raw !== "object" || Array.isArray(raw)) return {};
+    return Object.fromEntries(Object.entries(raw).filter(([, v]) => typeof v === "boolean")) as Record<string, boolean>;
+  } catch {
+    return {};
+  }
+}
+
+function writeSections(value: Record<string, boolean>) {
+  try {
+    localStorage.setItem(RAIL_SECTIONS_KEY, JSON.stringify(value));
+  } catch {
+    /* storage blocked: it still toggles for this session */
+  }
+}
+
+/**
+ * A collapsible rail section (heading button + labelled nav). A section holding the page that is
+ * showing stays open, so the current page is never hidden; its toggle is disabled meanwhile, since a
+ * click there could change nothing visible.
+ */
+function RailSection({
+  id,
+  label,
+  open,
+  forcedOpen,
+  onToggle,
+  toggleLabel,
+  children,
+}: {
+  id: string;
+  label: string;
+  open: boolean;
+  forcedOpen: boolean;
+  onToggle: () => void;
+  toggleLabel: string;
+  children: ReactNode;
+}) {
+  const shown = open || forcedOpen;
+  return (
+    <div>
+      <button
+        type="button"
+        className="rail-label rail-label--toggle"
+        onClick={forcedOpen ? undefined : onToggle}
+        aria-expanded={shown}
+        aria-disabled={forcedOpen || undefined}
+        aria-controls={`rail-${id}`}
+        title={toggleLabel}
+      >
+        <span>{label}</span>
+        <ChevronDownIcon className={`h-3 w-3 transition-transform ${shown ? "" : "-rotate-90"}`} />
+      </button>
+      <nav className="rail-list" id={`rail-${id}`} aria-label={label} hidden={!shown}>
+        {children}
+      </nav>
+    </div>
+  );
+}
+
 /** Left fleet rail: brand, workspace links, reorderable Spark list, settings and live-link status. */
 export function AppSidebar({
   sparks,
@@ -230,6 +299,27 @@ export function AppSidebar({
       }
       return !open;
     });
+
+  const [sections, setSections] = useState<Record<string, boolean>>(readSections);
+  const sectionOpen = (id: SectionId) => sections[id] !== false;
+  const toggleSection = (id: SectionId) =>
+    setSections((prev) => {
+      const next = { ...prev, [id]: prev[id] === false };
+      writeSections(next);
+      return next;
+    });
+  const pageLink = (id: string, label: string, icon: ReactNode) => (
+    <a
+      key={id}
+      href={idToPath(id)}
+      className={`rail-item ${activeId === id ? "is-active" : ""}`}
+      onClick={inApp(() => onSelect(id))}
+      aria-current={activeId === id ? "page" : undefined}
+    >
+      {icon}
+      <span className="rail-item__name">{label}</span>
+    </a>
+  );
 
   useEffect(() => {
     if (dragging) return;
@@ -293,6 +383,12 @@ export function AppSidebar({
         </button>
       </div>
 
+      <RailSection id="fleet" label={t("nav.fleet")} open={sectionOpen("fleet")} forcedOpen={FLEET_PAGES.includes(activeId ?? "")} onToggle={() => toggleSection("fleet")} toggleLabel={t("sidebar.sectionToggle", { section: t("nav.fleet") })}>
+        {pageLink(OVERVIEW_ID, t("nav.overview"), <GridIcon className="h-4 w-4" />)}
+        {showModels ? pageLink(MODELS_ID, t("nav.models"), <LayersIcon className="h-4 w-4" />) : null}
+        {pageLink(ACTIVITY_ID, t("nav.activity"), <ListIcon className="h-4 w-4" />)}
+      </RailSection>
+
       <div className="min-h-0">
         <div className="rail-label">
           <span>{t("nav.sparks")}</span>
@@ -343,139 +439,41 @@ export function AppSidebar({
         ) : null}
       </div>
 
-      <div>
-        <div className="rail-label">{t("sidebar.workspace")}</div>
-        <nav className="rail-list">
-          <a
-            href={idToPath(OVERVIEW_ID)}
-            className={`rail-item ${activeId === OVERVIEW_ID ? "is-active" : ""}`}
-            onClick={inApp(() => onSelect(OVERVIEW_ID))}
-            aria-current={activeId === OVERVIEW_ID ? "page" : undefined}
-          >
-            <GridIcon className="h-4 w-4" />
-            <span className="rail-item__name">{t("nav.overview")}</span>
-          </a>
-          {showModels ? (
-            <a
-              href={idToPath(MODELS_ID)}
-              className={`rail-item ${activeId === MODELS_ID ? "is-active" : ""}`}
-              onClick={inApp(() => onSelect(MODELS_ID))}
-              aria-current={activeId === MODELS_ID ? "page" : undefined}
-            >
-              <LayersIcon className="h-4 w-4" />
-              <span className="rail-item__name">{t("nav.models")}</span>
-            </a>
-          ) : null}
-          <a
-            href={idToPath(TOKENS_ID)}
-            className={`rail-item ${activeId === TOKENS_ID ? "is-active" : ""}`}
-            onClick={inApp(() => onSelect(TOKENS_ID))}
-            aria-current={activeId === TOKENS_ID ? "page" : undefined}
-          >
-            <TokensIcon className="h-4 w-4" />
-            <span className="rail-item__name">{t("nav.tokens")}</span>
-          </a>
-          <a
-            href={idToPath(COST_ID)}
-            className={`rail-item ${activeId === COST_ID ? "is-active" : ""}`}
-            onClick={inApp(() => onSelect(COST_ID))}
-            aria-current={activeId === COST_ID ? "page" : undefined}
-          >
-            <CoinsIcon className="h-4 w-4" />
-            <span className="rail-item__name">{t("nav.cost")}</span>
-          </a>
-          {showApiKeys ? (
-            <a
-              href={idToPath(API_KEYS_ID)}
-              className={`rail-item ${activeId === API_KEYS_ID ? "is-active" : ""}`}
-              onClick={inApp(() => onSelect(API_KEYS_ID))}
-              aria-current={activeId === API_KEYS_ID ? "page" : undefined}
-            >
-              <KeyIcon className="h-4 w-4" />
-              <span className="rail-item__name">{t("nav.apiKeys")}</span>
-            </a>
-          ) : null}
-          <a
-            href={idToPath(ENERGY_ID)}
-            className={`rail-item ${activeId === ENERGY_ID ? "is-active" : ""}`}
-            onClick={inApp(() => onSelect(ENERGY_ID))}
-            aria-current={activeId === ENERGY_ID ? "page" : undefined}
-          >
-            <BoltIcon className="h-4 w-4" />
-            <span className="rail-item__name">{t("nav.energy")}</span>
-          </a>
-          <a
-            href={idToPath(TEMPS_ID)}
-            className={`rail-item ${activeId === TEMPS_ID ? "is-active" : ""}`}
-            onClick={inApp(() => onSelect(TEMPS_ID))}
-            aria-current={activeId === TEMPS_ID ? "page" : undefined}
-          >
-            <ThermometerIcon className="h-4 w-4" />
-            <span className="rail-item__name">{t("nav.temps")}</span>
-          </a>
-          <a
-            href={idToPath(ACTIVITY_ID)}
-            className={`rail-item ${activeId === ACTIVITY_ID ? "is-active" : ""}`}
-            onClick={inApp(() => onSelect(ACTIVITY_ID))}
-            aria-current={activeId === ACTIVITY_ID ? "page" : undefined}
-          >
-            <ListIcon className="h-4 w-4" />
-            <span className="rail-item__name">{t("nav.activity")}</span>
-          </a>
-          <a
-            href={idToPath(STORAGE_ID)}
-            className={`rail-item ${activeId === STORAGE_ID ? "is-active" : ""}`}
-            onClick={inApp(() => onSelect(STORAGE_ID))}
-            aria-current={activeId === STORAGE_ID ? "page" : undefined}
-          >
-            <DiskIcon className="h-4 w-4" />
-            <span className="rail-item__name">{t("nav.storage")}</span>
-          </a>
-          <a
-            href={idToPath(SHOWCASE_ID)}
-            className={`rail-item ${activeId === SHOWCASE_ID ? "is-active" : ""}`}
-            onClick={inApp(() => onSelect(SHOWCASE_ID))}
-            aria-current={activeId === SHOWCASE_ID ? "page" : undefined}
-          >
-            <TerminalIcon className="h-4 w-4" />
-            <span className="rail-item__name">{t("nav.showcase")}</span>
-          </a>
-          <a href={idToPath(KIOSK_ID)} className="rail-item" title={t("sidebar.kioskTitle")}>
-            <ExpandIcon className="h-4 w-4" />
-            <span className="rail-item__name">{t("nav.kiosk")}</span>
-          </a>
-        </nav>
-      </div>
+      <RailSection id="insights" label={t("nav.insights")} open={sectionOpen("insights")} forcedOpen={INSIGHT_PAGES.includes(activeId ?? "")} onToggle={() => toggleSection("insights")} toggleLabel={t("sidebar.sectionToggle", { section: t("nav.insights") })}>
+        {pageLink(TOKENS_ID, t("nav.tokens"), <TokensIcon className="h-4 w-4" />)}
+        {pageLink(COST_ID, t("nav.cost"), <CoinsIcon className="h-4 w-4" />)}
+        {showApiKeys ? pageLink(API_KEYS_ID, t("nav.apiKeys"), <KeyIcon className="h-4 w-4" />) : null}
+        {pageLink(ENERGY_ID, t("nav.energy"), <BoltIcon className="h-4 w-4" />)}
+        {pageLink(TEMPS_ID, t("nav.temps"), <ThermometerIcon className="h-4 w-4" />)}
+      </RailSection>
+
+      <RailSection id="tools" label={t("nav.tools")} open={sectionOpen("tools")} forcedOpen={TOOL_PAGES.includes(activeId ?? "")} onToggle={() => toggleSection("tools")} toggleLabel={t("sidebar.sectionToggle", { section: t("nav.tools") })}>
+        {pageLink(STORAGE_ID, t("nav.storage"), <DiskIcon className="h-4 w-4" />)}
+        {pageLink(SHOWCASE_ID, t("nav.showcase"), <TerminalIcon className="h-4 w-4" />)}
+        {/* Kiosk renders outside the shell: a plain link (full page load), never in-app navigation. */}
+        <a href={idToPath(KIOSK_ID)} className="rail-item" title={t("sidebar.kioskTitle")}>
+          <ExpandIcon className="h-4 w-4" />
+          <span className="rail-item__name">{t("nav.kiosk")}</span>
+        </a>
+      </RailSection>
 
       {onSelectBench ? (
-        <div>
-          <button
-            type="button"
-            className="rail-label rail-label--toggle"
-            onClick={toggleBench}
-            aria-expanded={benchOpen || benchType != null}
-            aria-controls="rail-benchmarks"
-          >
-            <span>{t("nav.benchmarks")}</span>
-            <ChevronDownIcon className={`h-3 w-3 transition-transform ${benchOpen || benchType != null ? "" : "-rotate-90"}`} />
-          </button>
-          <nav className="rail-list" id="rail-benchmarks" aria-label={t("nav.benchmarks")} hidden={!(benchOpen || benchType != null)}>
-            {NAV_BENCH_TYPES.map((b) => (
-              <div key={b.id}>
-                <a
-                  href={idToPath(benchId(b.id))}
-                  className={`rail-item rail-item--compact ${benchNavActive(b, benchType) ? "is-active" : ""}`}
-                  onClick={inApp(() => onSelectBench(b.id))}
-                  aria-current={benchNavActive(b, benchType) ? "page" : undefined}
-                  title={benchLabels[b.id]?.blurb ?? b.blurb}
-                >
-                  <BenchIcon id={b.id} className="h-3.5 w-3.5" />
-                  <span className="rail-item__name">{benchLabels[b.id]?.label ?? b.label}</span>
-                </a>
-              </div>
-            ))}
-          </nav>
-        </div>
+        <RailSection id="benchmarks" label={t("nav.benchmarks")} open={benchOpen} forcedOpen={benchType != null} onToggle={toggleBench} toggleLabel={t("sidebar.sectionToggle", { section: t("nav.benchmarks") })}>
+          {NAV_BENCH_TYPES.map((b) => (
+            <div key={b.id}>
+              <a
+                href={idToPath(benchId(b.id))}
+                className={`rail-item rail-item--compact ${benchNavActive(b, benchType) ? "is-active" : ""}`}
+                onClick={inApp(() => onSelectBench(b.id))}
+                aria-current={benchNavActive(b, benchType) ? "page" : undefined}
+                title={benchLabels[b.id]?.blurb ?? b.blurb}
+              >
+                <BenchIcon id={b.id} className="h-3.5 w-3.5" />
+                <span className="rail-item__name">{benchLabels[b.id]?.label ?? b.label}</span>
+              </a>
+            </div>
+          ))}
+        </RailSection>
       ) : null}
 
       <div className="rail-foot">

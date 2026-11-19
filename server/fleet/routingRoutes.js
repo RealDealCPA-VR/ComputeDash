@@ -12,6 +12,12 @@ import { Readable } from "node:stream";
 import { buildRouteTable, createRoundRobinState, normalizePolicy, rankTargets, DEFAULT_MAX_INVENTORY_AGE_MS } from "./routing.js";
 
 export const UPSTREAM_HEADERS_TIMEOUT_MS = 30_000;
+/**
+ * A proxied response whose engine sends no bytes for this long after its headers is cut: the
+ * upstream request is aborted and the client connection closed, so a stalled engine cannot hold
+ * a request (and its least-loaded slot) open forever. Generous: long prefills stream nothing.
+ */
+export const UPSTREAM_STREAM_IDLE_TIMEOUT_MS = 120_000;
 const PROXY_PATHS = ["chat/completions", "completions", "embeddings"];
 /** Connection errors where the engine never received the request: safe to try the next target. */
 const RETRYABLE_CONNECT_CODES = new Set([
@@ -58,6 +64,7 @@ function errorText(err) {
  *   rejectLimited?: (res: import("express").Response, message: string) => unknown,
  *   getApiKey?: (targetId: string, port: number|null) => string|null|undefined,
  *   headersTimeoutMs?: number,
+ *   streamIdleTimeoutMs?: number,
  *   maxInventoryAgeMs?: number,
  *   now?: () => number,
  *   onProxySettled?: (info: { targetId: string|null, clientGone: boolean }) => void,
@@ -74,6 +81,7 @@ export function registerFleetRoutingRoutes(app, deps) {
     rejectLimited = (res, message) => res.status(429).json({ error: message }),
     getApiKey = null,
     headersTimeoutMs = UPSTREAM_HEADERS_TIMEOUT_MS,
+    streamIdleTimeoutMs = UPSTREAM_STREAM_IDLE_TIMEOUT_MS,
     maxInventoryAgeMs = DEFAULT_MAX_INVENTORY_AGE_MS,
     now = Date.now,
     onProxySettled = null,
@@ -287,17 +295,41 @@ export function registerFleetRoutingRoutes(app, deps) {
 
       if (!upstream.body) return void res.end();
       const source = typeof upstream.body.getReader === "function" ? Readable.fromWeb(upstream.body) : Readable.from(upstream.body);
+      // Idle watchdog on the engine side only: paused while waiting for a slow client to drain.
+      let idleTimer = null;
+      let stalled = false;
+      const disarm = () => {
+        if (idleTimer) clearTimeout(idleTimer);
+        idleTimer = null;
+      };
+      const arm = () => {
+        disarm();
+        if (!(streamIdleTimeoutMs > 0)) return;
+        idleTimer = setTimeout(() => {
+          stalled = true;
+          controller.abort();
+          source.destroy(new Error("upstream stalled"));
+        }, streamIdleTimeoutMs);
+        idleTimer.unref?.();
+      };
       try {
+        arm();
         for await (const chunk of source) {
+          disarm();
           if (gone()) break;
           if (!res.write(chunk)) await drained(res);
+          arm();
         }
+        disarm();
         if (!gone()) res.end();
       } catch {
         // Bytes were already sent: no retry and no JSON error; cut the response so the client sees it.
+        disarm();
+        if (stalled) console.warn(`[fleet routing] upstream sent nothing for ${Math.round(streamIdleTimeoutMs / 1000)} s; response cut`);
         controller.abort();
         if (!res.destroyed) res.destroy();
       } finally {
+        disarm();
         source.destroy();
       }
     } catch (err) {

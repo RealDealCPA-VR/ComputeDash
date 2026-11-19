@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { cancelOperation, FleetApiError, isTokenRequiredError, readOperation } from "../../api/fleetClient";
 import type { FleetLogLine, FleetOperation } from "../../api/fleetTypes";
@@ -66,6 +66,7 @@ export function OperationPanel({ tracked, modelLabel, onUpdate, onFinished, onLo
   const [pollError, setPollError] = useState<string | null>(null);
   const [resume, setResume] = useState(0);
   const [confirmCancel, setConfirmCancel] = useState(false);
+  const lockedNoteId = useId();
   const [cancelState, setCancelState] = useState<"idle" | "pending" | "refused" | "error" | "token">("idle");
   const [cancelError, setCancelError] = useState<string | null>(null);
   /** The server's reason for a refused cancel (raw text). */
@@ -195,7 +196,7 @@ export function OperationPanel({ tracked, modelLabel, onUpdate, onFinished, onLo
                 className="btn btn--sm btn--danger"
                 onClick={() => setConfirmCancel(true)}
                 disabled={cancelState === "pending" || controlLocked}
-                {...(controlLocked ? { title: t("token.disabledReason"), "aria-description": t("token.disabledReason") } : {})}
+                aria-describedby={controlLocked ? lockedNoteId : undefined}
               >
                 {cancelState === "pending" ? t("operation.cancelling") : t("operation.cancel")}
               </button>
@@ -223,6 +224,11 @@ export function OperationPanel({ tracked, modelLabel, onUpdate, onFinished, onLo
       ) : null}
 
       {lost ? <p className="mm-op__note" role="status">{t("operation.lost")}</p> : null}
+      {running && controlLocked ? (
+        <p id={lockedNoteId} className="mm-op__note">
+          {t("token.disabledReason")}
+        </p>
+      ) : null}
 
       {op.steps.length ? (
         <ol className="mm-steps">

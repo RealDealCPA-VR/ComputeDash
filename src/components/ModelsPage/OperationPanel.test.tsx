@@ -234,13 +234,16 @@ it("disables Cancel with the token reason while control is locked", async () => 
   await flush();
   const cancel = btn(view.container, "Cancel");
   expect(cancel.disabled).toBe(true);
-  expect(cancel.getAttribute("title")).toContain("needs a dashboard access token");
-  expect(cancel.getAttribute("aria-description")).toContain("needs a dashboard access token");
+  expect(cancel.hasAttribute("aria-description")).toBe(false);
+  // The reason is visible text the disabled button points at.
+  const reason = document.getElementById(cancel.getAttribute("aria-describedby")!);
+  expect(reason?.textContent).toContain("needs a dashboard access token");
+  expect(view.container.contains(reason)).toBe(true);
   // Unlocked: no hint.
   const { container } = setup();
   await flush();
   expect(btn(container, "Cancel").disabled).toBe(false);
-  expect(btn(container, "Cancel").hasAttribute("title")).toBe(false);
+  expect(btn(container, "Cancel").hasAttribute("aria-describedby")).toBe(false);
 });
 
 it("lists every model a switch stops (fromModelKeys), falling back to fromModelKey", async () => {
