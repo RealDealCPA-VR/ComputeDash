@@ -766,7 +766,7 @@ export class OperationRunner {
       if (!res?.ok) throw new OperationError("action_failed", `could not stop ${model.label}: ${res?.error ?? "no answer"}`, { modelKey: model.modelKey });
       if (res.detail) this._log(rec, res.detail);
       if (mech.kind === "launcher" && res.job?.id) {
-        const job = await this._waitJobExit(rec, rec.target.unitId, res.job.id, this.stopTimeoutMs);
+        const job = await this._waitJobExit(rec, rec.target.unitId, res.job.id, this.stopTimeoutMs, model.modelKey);
         if (job?.status === "failed") {
           throw new OperationError("action_failed", `stop script for ${model.label} failed${job.error ? `: ${job.error}` : job.exitCode != null ? ` (exit ${job.exitCode})` : ""}`, { modelKey: model.modelKey });
         }
@@ -820,7 +820,7 @@ export class OperationRunner {
     return out.job ?? null;
   }
 
-  async _waitJobExit(rec, unitId, jobId, timeoutMs) {
+  async _waitJobExit(rec, unitId, jobId, timeoutMs, modelKey = null) {
     rec.jobs.set(jobId, rec.jobs.get(jobId) ?? 0);
     const deadline = this.now() + timeoutMs;
     for (;;) {
@@ -828,7 +828,7 @@ export class OperationRunner {
       if (!job) return null; // replaced or unreadable: the inventory decides
       if (job.status !== "running") return job;
       if (this.now() >= deadline) {
-        throw new OperationError("timeout", `stop script still running after ${fmtDuration(timeoutMs)}`, { modelKey: model.modelKey });
+        throw new OperationError("timeout", `stop script still running after ${fmtDuration(timeoutMs)}`, { modelKey });
       }
       await this._sleep(rec, this.pollMs.job);
     }

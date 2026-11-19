@@ -96,6 +96,8 @@ const launchers = {
       job.status = "failed";
       job.exitCode = 1;
       job.error = "stop.sh exited 1";
+    } else if (action === "stop" && launchers.stopBehavior === "hang") {
+      // the stop script never exits; the model keeps serving
     } else if (action === "stop" && launchers.stopBehavior === "slow") {
       setTimeout(() => {
         m.state = "configured";
@@ -552,4 +554,15 @@ test("unknown in-flight requests are reported as not checked", async () => {
   const op = await settle(runner, runner.start("node:spark1", { action: "stop", modelKey: a }).operation.id);
   assert.equal(op.status, "succeeded", op.error);
   assert.match(op.steps.find((s) => s.id === "guard").detail, /in-flight requests unknown — not checked/);
+});
+
+test("a stop script that never exits fails with the timeout message, recorded on the stopped model", async () => {
+  const { runner } = setup({ stopTimeoutMs: 50 });
+  const a = lp("qwen-a", "serving");
+  launchers.stopBehavior = "hang";
+  const op = await settle(runner, runner.start("node:spark1", { action: "stop", modelKey: a }).operation.id);
+  assert.equal(op.status, "failed");
+  assert.match(op.error, /stop script still running after/);
+  assert.ok(op.steps.some((st) => /stop/.test(st.id) && st.status === "failed"), JSON.stringify(op.steps));
+  assert.ok(runner.lastFailure("node:spark1", a));
 });

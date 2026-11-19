@@ -2674,6 +2674,17 @@ registerFleetRoutingRoutes(app, {
   rejectLimited,
   getApiKey: (targetId, port) => fleetModels.apiKeyFor(targetId, port),
 });
+// Errors raised before a fleet route answers (malformed JSON, a body over the proxy's
+// 4 MB limit) come back as the fleet API's JSON shape instead of Express's default
+// HTML page, which would include a stack trace when NODE_ENV is unset.
+app.use("/api/fleet", (err, req, res, next) => {
+  if (res.headersSent) return next(err);
+  const status = Number.isInteger(err?.status) && err.status >= 400 && err.status < 600 ? err.status : 500;
+  const code =
+    err?.type === "entity.too.large" ? "payload_too_large" : err?.type === "entity.parse.failed" ? "invalid_json" : status >= 500 ? "internal_error" : "bad_request";
+  if (status >= 500) console.error("[fleet] request failed:", err);
+  res.status(status).json({ error: status >= 500 || !err?.expose ? "Request failed" : String(err.message), code });
+});
 
 app.post("/api/sparks/:id/wake", async (req, res) => {
   try {
