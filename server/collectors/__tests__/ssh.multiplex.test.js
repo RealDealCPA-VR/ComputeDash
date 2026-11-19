@@ -1,7 +1,6 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import {
@@ -49,7 +48,8 @@ test("on Windows the control directory is created under os.tmpdir(), never /tmp"
     mkdtempSync: (prefix) => { made.push(prefix); return `${prefix}abc123`; },
     chmodSync: () => {},
   };
-  const base = path.join(os.tmpdir(), "fake-win-temp");
+  // A Windows-shaped temp dir: on Linux os.tmpdir() is /tmp itself, so it cannot stand in for one.
+  const base = "C:\\Users\\me\\AppData\\Local\\Temp";
   const dir = createControlDir({ platform: "win32", tmpdir: () => base, fsImpl, warn: assert.fail });
   assert.deepEqual(made, [path.join(base, "sparkdash-ssh-")]);
   assert.equal(dir, `${path.join(base, "sparkdash-ssh-")}abc123`);
