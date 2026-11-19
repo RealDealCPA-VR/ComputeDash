@@ -267,13 +267,27 @@ the final review finds nothing blocking, and the branch `feature/fleet-model-man
 
 ## 7. Acceptance checklist (from the PRD)
 
-- [ ] Every connected node and logical cluster is listed, with health.
-- [ ] Installed / configured / loaded / serving models are discovered per target, with all ten states and no fabricated state.
-- [ ] Start, Stop, Switch, Reload, View Logs, Refresh Inventory work per target.
-- [ ] The operator chooses the node or cluster that runs a model.
-- [ ] Hardware utilization and model execution status are visible (existing telemetry + inventory).
-- [ ] Smart routing is a separate toggle, off by default, and manual control works with it off.
-- [ ] Cluster models are counted once. A real distributed cluster is distinguished from a visual group.
-- [ ] Adapters cover Ollama, LM Studio, vLLM, llama.cpp, MLX / mac profiles and custom profiles. SGLang plugs in without core changes.
-- [ ] Nodes are identified by persistent id. Reconnect after Tailscale or host interruptions works. Control is authenticated only.
-- [ ] The dashboard runs and tests pass on native Windows.
+Status at the end of the build (branch `feature/fleet-model-manager`). Checked items are covered by automated
+tests. Nothing has been exercised against the real Sparks, Dell or Mac Studio yet.
+
+- [x] Every connected node and logical cluster is listed, with health. (targets.js, Models page)
+- [x] Installed / configured / loaded / serving models are discovered per target, with all ten states and no fabricated state. (modelStates.js, inventory.js)
+- [x] Start, Stop, Switch, Reload, View Logs, Refresh Inventory work per target. (operations.js, routes.js, Models page)
+- [x] The operator chooses the node or cluster that runs a model.
+- [x] Hardware utilization and model execution status are visible (existing telemetry + inventory).
+- [x] Smart routing is a separate toggle, off by default, and manual control works with it off.
+- [x] Cluster models are counted once. A real distributed cluster is distinguished from a visual group.
+- [x] Adapters cover Ollama, LM Studio, vLLM, llama.cpp, MLX / mac profiles and custom profiles. SGLang plugs in without core changes.
+- [x] Nodes are identified by persistent id. Reconnect after Tailscale or host interruptions works (per-target backoff). Control is authenticated only.
+- [x] The dashboard starts on native Windows: no /tmp dependency at load, and no SSH connection reuse by default. `npm test` runs there through the glob-expanding runner. Many pre-existing server tests need a POSIX shell, Unix sockets or POSIX file modes, so the full suite is verified on Linux by `.github/workflows/test.yml`.
+
+## 8. Decisions made during the build
+
+These came out of the reviewer rounds and refine the plan above:
+
+- **Control requires a dashboard token.** Fleet control routes (operations, cancel, cluster changes) and the `/api/fleet/v1` proxy answer 403 `token_required` when `SPARKDASH_TOKEN` is unset, because behind Tailscale Serve every tailnet device arrives via loopback. `SPARKDASH_FLEET_ALLOW_NO_TOKEN=1` opts out on a single-user, loopback-only host. On a loopback bind, reads are not token-checked (existing dashboard behavior); see docs/REMOTE-ACCESS.md.
+- **Switch scope.** "Stop current" stops only models on the same runtime (same port, Mac runtime, or engine and port). `fromModelKeys` lists everything stopped, and rollback restores exactly those.
+- **Honest failures.** A model is marked `failed` only if the operation actually acted on it. A launch profile without a port cannot be switched to (`no_port`), and a plain start of one never claims `serving`.
+- **Cancel** is honored only while waiting for readiness. At other times it answers `{cancelled:false, reason}`.
+- **Routing** only uses endpoints reached directly. SSH-tunnel and unverified loopback endpoints are never routed. The proxy authenticates, gates and rate-limits before parsing a body (4 MB limit). Errors under `/api/fleet` are JSON.
+- **Node 22** is required by the repo's dependencies.

@@ -22,9 +22,11 @@ The package uses ESM throughout. `server/index.js` runs directly in Node and cre
 | `server/apiKeys/`, `scripts/apikeys-bridge/` | Opt-in read-only API Keys views and the reference host bridge they call over a unix socket |
 | `server/attic/` | Confirmed spark-attic installation on Linux Sparks using a pinned installer and sudo; status collection remains in `collectors/AtticProbe.js` |
 | `server/storage/` | Storage Manager: disk scans, Docker images, deletes. Shell programs in `scripts/`, path safety in `policy.js`, execution contexts (ssh / native-local / container-local) and the per-feature `supports()` table in `context.js`, what may start (one job per Spark, two scans per fleet) in `admission.js`, scan stop and reconcile rules in `scanJob.js` (unit-side lock and job records in `scripts/unit-state.sh`, stop in `scripts/job.sh`), the delete advisor's rules and known-place table in `advice.js` (pure; evidence from the read-only `scripts/advise.sh`, parsed by `parseAdviseOutput` in `commands.js`), routes under `/api/sparks/:id/storage` |
+| `server/fleet/` | Fleet model manager: targets (units and `config/fleet-clusters.json` clusters), per-target model inventory and the ten model states, engine adapters registered by name in `adapters/index.js`, the operation runner (`operations.js`), routes under `/api/fleet`, and optional smart routing with its OpenAI-compatible proxy (`routing.js`, `routingRoutes.js`). See docs/FLEET-MODELS.md |
+| `scripts/run-node-tests.mjs` | Expands server test globs in Node and runs `node --test`, so `npm test` works under `cmd.exe`; `.github/workflows/test.yml` runs typecheck, build and the full suite on Linux |
 | `src/api/` | API clients and browser-facing data types |
 | `src/hooks/` | Snapshot subscription, metric history and UI hooks |
-| `src/components/` | Shell, overview, unit panels and feature pages; the Storage Manager's delete check is `StoragePage/DeleteAdvice.tsx` with its pure rules for friction in `deleteAdviceRules.ts` and its request in `useDeleteAdvice.ts` |
+| `src/components/` | Shell, overview, unit panels and feature pages; the Models page is `ModelsPage/` (target list, model table, switch dialog, operation panel, clusters, routing panel); the Storage Manager's delete check is `StoragePage/DeleteAdvice.tsx` with its pure rules for friction in `deleteAdviceRules.ts` and its request in `useDeleteAdvice.ts` |
 | `src/styles/`, `src/index.css` | Component styles, Tailwind entry and theme variables |
 | `src/shared/` | Shared pure logic, including benchmark prompts, formatting and the one "main disk" policy (`mainFilesystem.js`, also imported by the server) and the electricity tariff (`energyTariff.js`: flat or time-of-use price per hour, validated by the server and costed by the Energy page, including past months from their hourly energy) |
 | `config/` | Runtime configuration and persisted histories; never use live files in tests |
@@ -35,7 +37,7 @@ Most API routes are inline in `server/index.js`; larger existing feature modules
 
 ## Development and validation
 
-Use `npm ci` to install the existing lockfile graph, then `npm run dev` for the Node watch server plus Vite. Use `npm run typecheck`, `npm run build`, and `npm test` before submission. `npm test` runs the complete server suite followed by the frontend suite; individual test globs and commands live in `package.json`. Server fixtures isolate configuration in temporary directories; frontend fixtures live under `src/testing/`.
+Use `npm ci` to install the existing lockfile graph, then `npm run dev` for the Node watch server plus Vite. Use `npm run typecheck`, `npm run build`, and `npm test` before submission. `npm test` runs the complete server suite followed by the frontend suite; individual test globs and commands live in `package.json`. On Windows the server globs are expanded by `scripts/run-node-tests.mjs`, but many server tests need a POSIX shell; the Linux CI workflow (or WSL) is the reference run. Server fixtures isolate configuration in temporary directories; frontend fixtures live under `src/testing/`.
 
 GPU-clock generated programs require Linux util-linux `flock` for on-unit serialization with their reboot jobs. Their sandbox subprocesses must all use the fixture's isolated HOME and PATH, including manual-command and password-mode executions; never let a generated program discover the developer's crontab or marker.
 
@@ -55,6 +57,10 @@ Agent-backed Macs expose this catalog in the Models panel, including bounded
 operation output with copy and expanded views. The configured `macTransport`
 snapshot field keeps that control surface stable while telemetry is offline.
 SSH-backed hosts retain the script-based Models panel.
+
+## Fleet model manager
+
+`server/fleet/` reuses the unit registry, monitor snapshots, launch profiles, Mac runtime control and the SSH/tunnel helpers; it adds no collector. Nodes are registry units (`node:<id>`), clusters are `ClusterStore` records (`cluster:<id>`). `inventory.js` gathers evidence from the adapters and profiles and derives every state with `deriveModelState` in `modelStates.js`; a failed source yields `unknown` or `unreachable`, never a guess. Cluster models are listed once, under the cluster. `OperationRunner` runs one operation per target (a cluster also locks its members) as logged steps with readiness waits and switch rollback; operations live in memory. Adapters call fixed paths and templates through an injected context, so tests are hermetic. A new engine is one `registerAdapter()` call. `fleetModelsEnabled` (on) gates the page and routes; `smartRoutingEnabled` (off) gates routing, which never changes models and only targets endpoints reached directly. Fleet control routes and the proxy refuse with `403 token_required` while no `SPARKDASH_TOKEN` is configured (`SPARKDASH_FLEET_ALLOW_NO_TOKEN=1` opts out); the proxy is authenticated, gated, rate-limited and body-parsed (4 MB) by `fleetProxyGate` in `server/index.js`, ahead of the global JSON parser; an error handler after the routing routes keeps body-parser and unexpected errors under `/api/fleet` in the JSON `{ error, code }` shape. On a loopback bind fleet reads are not token-checked, like every other `GET`. Server tests are under `server/fleet/__tests__/`; the page's tests sit beside its components.
 
 ## Metric conventions
 
